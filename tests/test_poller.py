@@ -1,8 +1,8 @@
-"""Tests de `parking.ingest.poller`.
+"""Tests for `parking.ingest.poller`.
 
-Lo que importa aquí es la resiliencia: un ciclo que falla no debe tumbar el
-bucle, porque un hueco de 5 min en la serie es mucho más barato que un poller
-muerto que nadie reinicia.
+What matters here is resilience: a failing cycle must not bring the loop down,
+because a 2-minute hole in the series is far cheaper than a dead poller nobody
+restarts.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ def record(kerbsideid: int, *, lastupdated: str = FEED_STAMP) -> dict:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    # poll_interval 60 es el mínimo que acepta Settings; los tests usan
-    # max_cycles para no esperarlo nunca.
+    # 60 is the minimum Settings accepts; the tests use max_cycles so they
+    # never actually wait for it.
     return Settings(_env_file=None, data_dir=tmp_path, poll_interval_seconds=60, max_retries=0)
 
 
@@ -54,7 +54,7 @@ def test_run_once_reports_success(settings: Settings) -> None:
 
 @respx.mock
 def test_run_once_survives_a_bad_payload(settings: Settings) -> None:
-    """Un estado desconocido es un error de datos: se registra, no se propaga."""
+    """An unknown state is a data error: logged, not propagated."""
     broken = record(1) | {"status_description": "Vandalised"}
     respx.get(export_url(settings)).respond(json=[broken])
 
@@ -64,7 +64,7 @@ def test_run_once_survives_a_bad_payload(settings: Settings) -> None:
 
 @respx.mock
 def test_run_once_survives_network_failure(settings: Settings) -> None:
-    respx.get(export_url(settings)).mock(side_effect=httpx.ConnectError("sin red"))
+    respx.get(export_url(settings)).mock(side_effect=httpx.ConnectError("no network"))
 
     with httpx.Client() as client:
         assert run_once(client, settings) is False
@@ -78,7 +78,7 @@ def test_run_once_survives_server_error(settings: Settings) -> None:
         assert run_once(client, settings) is False
 
 
-# --- bucle ------------------------------------------------------------------
+# --- loop -------------------------------------------------------------------
 
 
 @respx.mock
@@ -93,7 +93,7 @@ def test_run_stops_after_max_cycles(settings: Settings) -> None:
 
 @respx.mock
 def test_run_does_not_sleep_after_the_last_cycle(settings: Settings) -> None:
-    """Tras el último ciclo debe salir sin esperar el intervalo."""
+    """After the final cycle it must exit without waiting out the interval."""
     respx.get(export_url(settings)).respond(json=[record(1)])
 
     started = time.monotonic()
@@ -104,7 +104,7 @@ def test_run_does_not_sleep_after_the_last_cycle(settings: Settings) -> None:
 
 @respx.mock
 def test_run_keeps_going_after_a_failure(settings: Settings) -> None:
-    """Es la propiedad central: el bucle sobrevive a un ciclo fallido."""
+    """This is the central property: the loop survives a failed cycle."""
     route = respx.get(export_url(settings)).mock(
         side_effect=[
             httpx.Response(500),
@@ -116,7 +116,7 @@ def test_run_keeps_going_after_a_failure(settings: Settings) -> None:
     failures = run(settings, max_cycles=3, interval_seconds=0)
 
     assert route.call_count == 3
-    assert failures == 0, "el contador se reinicia cuando un ciclo vuelve a ir bien"
+    assert failures == 0, "the counter resets once a cycle succeeds again"
 
 
 @respx.mock
@@ -134,7 +134,7 @@ def test_run_exits_when_stop_is_requested(settings: Settings) -> None:
 
     run(settings, max_cycles=5, stop=stop, interval_seconds=0)
 
-    assert route.call_count == 0, "no debe empezar un ciclo si ya se pidió parar"
+    assert route.call_count == 0, "no cycle should start once a stop was requested"
 
 
 # --- StopSignal -------------------------------------------------------------
@@ -155,7 +155,6 @@ def test_stop_signal_is_set_by_request() -> None:
 
 def test_stop_signal_wait_returns_immediately_once_set() -> None:
     import signal
-    import time
 
     stop = StopSignal()
     stop.request(signal.SIGINT, None)

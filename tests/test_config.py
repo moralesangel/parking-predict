@@ -1,4 +1,4 @@
-"""Tests de `parking.config`."""
+"""Tests for `parking.config`."""
 
 from __future__ import annotations
 
@@ -25,12 +25,13 @@ def test_env_vars_override_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.poll_interval_seconds == 600
-    # El validador quita la barra final para poder concatenar rutas sin dobles.
+    # The validator strips the trailing slash so paths can be concatenated
+    # without producing doubles.
     assert settings.api_base_url == "https://example.test"
 
 
 def test_poll_interval_below_floor_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sondear más rápido que 1/min abusaría de una API con límites no documentados."""
+    """Polling faster than once a minute would abuse an API with undocumented limits."""
     monkeypatch.setenv("PARKING_POLL_INTERVAL_SECONDS", "5")
 
     with pytest.raises(ValueError):
@@ -46,7 +47,7 @@ def test_relative_data_dir_becomes_absolute(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_web_dir_is_configurable_and_absolute(monkeypatch: pytest.MonkeyPatch) -> None:
-    """En Docker el paquete vive en site-packages: la ruta no puede deducirse."""
+    """In Docker the package lives in site-packages: the path cannot be derived."""
     monkeypatch.setenv("PARKING_WEB_DIR", "web")
 
     settings = Settings(_env_file=None)
@@ -65,11 +66,12 @@ def test_derived_paths_hang_off_data_dir(tmp_path: Path) -> None:
 
 
 def test_quality_thresholds_have_the_measured_defaults() -> None:
-    """24 h sale del valle de la distribución real; ver docs/data_quality.md."""
+    """24 h comes from the valley of the real distribution; see docs/data_quality.md."""
     settings = Settings(_env_file=None)
 
     assert settings.stuck_after_hours == 24.0
-    # 3 ciclos de 120 s: tolera el retraso ocasional del feed sin marcar hueco.
+    # 3 cycles of 120 s: tolerates the feed's occasional delay without
+    # flagging a gap.
     assert settings.gap_after_seconds == 360.0
 
 

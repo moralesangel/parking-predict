@@ -1,13 +1,13 @@
-"""Tests de `parking.features.live` y `parking.api.prediction`.
+"""Tests for `parking.features.live` and `parking.api.prediction`.
 
-Lo que más importa proteger:
+What matters most to protect:
 
-- Las features en vivo deben tener **exactamente** las columnas con las que se
-  entrenó el modelo. Si falta una, LightGBM falla; si sobra o cambia de orden,
-  puntúa mal en silencio.
-- Solo cuentan las lecturas fiables, igual que en la Fase 2.
-- Los huecos de la serie se rellenan y se marcan: un retardo calculado sobre
-  una rejilla con huecos mentiría sin avisar.
+- The live features must carry **exactly** the columns the model was trained
+  on. Missing one makes LightGBM fail; an extra one or a different order makes
+  it score badly in silence.
+- Only reliable readings count, same as phase 2.
+- Gaps in the series are filled and flagged: a lag computed over a grid with
+  holes would lie without warning.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from parking.features.live import (
 
 BATCH = dt.datetime(2026, 10, 22, 12, 0, tzinfo=dt.UTC)
 SEGMENT = "COLLINS STREET|EXHIBITION STREET|RUSSELL STREET"
+DESCRIPTION = "Collins Street between Russell Street and Exhibition Street"
 
 
 def reading(
@@ -62,7 +63,7 @@ def bays_json(path: Path, rows: list[dict]) -> Path:
     return path
 
 
-# --- mapa de plazas a tramos ------------------------------------------------
+# --- bay to segment map -----------------------------------------------------
 
 
 def test_bay_segments_maps_kerbsideid_to_segment(tmp_path: Path) -> None:
@@ -71,9 +72,7 @@ def test_bay_segments_maps_kerbsideid_to_segment(tmp_path: Path) -> None:
         [
             {
                 "kerbsideid": "123",
-                "roadsegmentdescription": (
-                    "Collins Street between Russell Street and Exhibition Street"
-                ),
+                "roadsegmentdescription": DESCRIPTION,
                 "latitude": -37.81,
                 "longitude": 144.97,
             }
@@ -84,7 +83,7 @@ def test_bay_segments_maps_kerbsideid_to_segment(tmp_path: Path) -> None:
 
 
 def test_bays_without_a_parseable_segment_are_skipped(tmp_path: Path) -> None:
-    """Meterlas en un tramo aproximado contaminaría el recuento de ese tramo."""
+    """Putting them in an approximate segment would contaminate its counts."""
     path = bays_json(
         tmp_path / "bays.json",
         [
@@ -97,19 +96,18 @@ def test_bays_without_a_parseable_segment_are_skipped(tmp_path: Path) -> None:
 
 
 def test_coordinates_average_the_bays_of_a_segment(tmp_path: Path) -> None:
-    description = "Collins Street between Russell Street and Exhibition Street"
     path = bays_json(
         tmp_path / "bays.json",
         [
             {
                 "kerbsideid": "1",
-                "roadsegmentdescription": description,
+                "roadsegmentdescription": DESCRIPTION,
                 "latitude": -37.80,
                 "longitude": 144.96,
             },
             {
                 "kerbsideid": "2",
-                "roadsegmentdescription": description,
+                "roadsegmentdescription": DESCRIPTION,
                 "latitude": -37.82,
                 "longitude": 144.98,
             },
@@ -123,11 +121,11 @@ def test_coordinates_average_the_bays_of_a_segment(tmp_path: Path) -> None:
     assert centroids["bays"][0] == 2
 
 
-# --- agregación por tramo ---------------------------------------------------
+# --- aggregation by segment -------------------------------------------------
 
 
 def test_occupancy_counts_only_reliable_readings() -> None:
-    """Regla de la Fase 2: un sensor congelado no es una plaza libre."""
+    """Phase 2 rule: a frozen sensor is not a free bay."""
     frame = series(
         reading(1, occupied=False),
         reading(2, occupied=True),
@@ -150,7 +148,7 @@ def test_bays_without_a_segment_are_excluded() -> None:
 
 
 def test_occupancy_takes_the_last_batch_within_a_bucket() -> None:
-    """Dos lotes del feed en la misma ventana de 5 min: vale el estado final."""
+    """Two feed batches in the same 5-minute window: the final state wins."""
     later = BATCH + dt.timedelta(minutes=2)
     frame = series(
         reading(1, occupied=True, batch=BATCH),
@@ -171,7 +169,7 @@ def test_occupancy_without_any_mappable_bay() -> None:
     assert segment_occupancy(series(reading(9, occupied=True)), {1: SEGMENT}).is_empty()
 
 
-# --- densificación ----------------------------------------------------------
+# --- densification ----------------------------------------------------------
 
 
 def occupancy_frame(timestamps: list[dt.datetime], free: list[int]) -> pl.DataFrame:
@@ -187,7 +185,7 @@ def occupancy_frame(timestamps: list[dt.datetime], free: list[int]) -> pl.DataFr
 
 
 def test_densify_fills_missing_instants() -> None:
-    """Sin esto, `shift(1)` saltaría a un instante arbitrario y el retardo mentiría."""
+    """Without this, `shift(1)` would jump to an arbitrary instant and the lag would lie."""
     stamps = [BATCH, BATCH + dt.timedelta(minutes=15)]
 
     result = densify(occupancy_frame(stamps, [3, 1]))
@@ -221,7 +219,7 @@ def test_densify_on_an_empty_frame() -> None:
 
 
 def test_live_features_match_the_training_columns() -> None:
-    """Es la propiedad de la que depende poder puntuar con el modelo entrenado."""
+    """This is the property that makes scoring with the trained model possible."""
     from parking.features.dataset import build_dataset
 
     stamps = [BATCH + dt.timedelta(minutes=5 * i) for i in range(20)]
@@ -235,7 +233,7 @@ def test_live_features_match_the_training_columns() -> None:
 
 
 def test_live_features_have_no_targets() -> None:
-    """En vivo el futuro todavía no existe."""
+    """Live, the future does not exist yet."""
     stamps = [BATCH + dt.timedelta(minutes=5 * i) for i in range(12)]
 
     live = build_live_features(densify(occupancy_frame(stamps, [3] * 12)))
@@ -253,7 +251,7 @@ def test_latest_features_returns_one_row_per_segment() -> None:
     assert latest["free_bays"].to_list() == [0]
 
 
-# --- horizonte y distancia --------------------------------------------------
+# --- horizon and distance ---------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -265,7 +263,7 @@ def test_snap_horizon_picks_the_nearest_trained_model(eta: float, expected: int)
 
 
 def test_snap_horizon_only_returns_trained_horizons() -> None:
-    """Interpolar entre dos modelos daría una probabilidad sin calibrar."""
+    """Interpolating between two models would give an uncalibrated probability."""
     assert all(snap_horizon(eta) in AVAILABLE_HORIZONS for eta in range(0, 121, 7))
 
 
@@ -276,7 +274,7 @@ def test_haversine_is_zero_at_the_same_point() -> None:
 
 
 def test_haversine_matches_a_known_distance() -> None:
-    """Un grado de latitud son ~111 km."""
+    """One degree of latitude is about 111 km."""
     distance = haversine_m(-37.0, 144.96, np.array([-38.0]), np.array([144.96]))
 
     assert distance[0] == pytest.approx(111_195, rel=0.01)
@@ -289,7 +287,7 @@ def test_haversine_is_vectorised() -> None:
     assert distances[1] > distances[0]
 
 
-# --- servicio ---------------------------------------------------------------
+# --- service ----------------------------------------------------------------
 
 
 @pytest.fixture
@@ -314,15 +312,13 @@ def _reference_file(settings: Settings) -> Path:
 
 
 def test_service_without_snapshots_is_unavailable(settings: Settings) -> None:
-    """Con geometría pero sin datos del poller, el mensaje debe señalar al poller."""
+    """With geometry but no poller data, the message must point at the poller."""
     bays_json(
         _reference_file(settings),
         [
             {
                 "kerbsideid": "1",
-                "roadsegmentdescription": (
-                    "Collins Street between Russell Street and Exhibition Street"
-                ),
+                "roadsegmentdescription": DESCRIPTION,
                 "latitude": -37.81,
                 "longitude": 144.97,
             }

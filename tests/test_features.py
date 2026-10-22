@@ -1,11 +1,12 @@
-"""Tests de `parking.features`.
+"""Tests for `parking.features`.
 
-Lo que más importa proteger:
+What matters most to protect:
 
-- `VehiclePresent` separa intervalos ocupados de intervalos libres. Tratarlos
-  igual triplica la ocupación y aplana el ciclo diario, sin que nada falle.
-- Ninguna feature puede mirar al futuro.
-- El split es temporal, nunca aleatorio.
+- `VehiclePresent` separates occupied intervals from vacant ones. Treating them
+  alike doubles the occupancy and flattens the daily cycle, without anything
+  failing.
+- No feature may look into the future.
+- The split is temporal, never random.
 """
 
 from __future__ import annotations
@@ -78,7 +79,7 @@ def test_perpendicular_segments_at_a_corner_are_neighbours() -> None:
 
 
 def test_distant_segments_of_the_same_street_are_not_neighbours() -> None:
-    """Definir la vecindad por 'misma calle' uniría los dos extremos del CBD."""
+    """Defining adjacency as 'same street' would join both ends of the CBD."""
     west = key("COLLINS STREET", "KING STREET", "WILLIAM STREET")
     east = key("COLLINS STREET", "RUSSELL STREET", "SPRING STREET")
 
@@ -128,7 +129,7 @@ def events(*rows: dict) -> pl.LazyFrame:
 
 
 def test_us_date_format_is_parsed_as_month_first() -> None:
-    """`11/03/2019` es el 3 de noviembre. Una inferencia automática fallaría aquí."""
+    """`11/03/2019` is 3 November. Automatic inference would fail here."""
     parsed = parse_events(
         pl.DataFrame([raw_row("1A", "11/03/2019 03:00:56 AM", "11/03/2019 04:00:00 AM")]).lazy()
     ).collect()
@@ -145,7 +146,7 @@ def test_pm_times_are_parsed_as_afternoon() -> None:
 
 
 def test_vacancy_intervals_do_not_count_as_occupancy() -> None:
-    """El bug que aplanaba el ciclo diario: sumar ocupado y libre da el 100 %."""
+    """The bug that flattened the daily cycle: summing occupied and free gives 100%."""
     occupied = events(raw_row("1A", "03/01/2019 12:00:00 AM", "03/01/2019 01:00:00 AM"))
     vacant = events(
         raw_row("1A", "03/01/2019 12:00:00 AM", "03/01/2019 01:00:00 AM", present=False)
@@ -159,7 +160,7 @@ def test_vacancy_intervals_do_not_count_as_occupancy() -> None:
 
 
 def test_vacant_only_bays_still_count_in_the_denominator() -> None:
-    """Una plaza libre toda la ventana existe: omitirla vaciaría el denominador."""
+    """A bay free for the whole window exists: omitting it would empty the denominator."""
     frame = events(
         raw_row("1A", "03/01/2019 12:00:00 AM", "03/01/2019 01:00:00 AM"),
         raw_row("2A", "03/01/2019 12:00:00 AM", "03/01/2019 01:00:00 AM", present=False),
@@ -172,7 +173,7 @@ def test_vacant_only_bays_still_count_in_the_denominator() -> None:
 
 
 def test_stay_started_before_the_window_still_occupies() -> None:
-    """Filtrar por `arrival >= start` haría parecer el tramo más vacío."""
+    """Filtering on `arrival >= start` would make the segment look emptier."""
     frame = events(raw_row("1A", "02/28/2019 10:00:00 PM", "03/01/2019 02:00:00 AM"))
 
     series = occupancy_series(frame, T0, T0 + dt.timedelta(hours=1))
@@ -193,7 +194,7 @@ def test_occupancy_follows_arrivals_and_departures() -> None:
 
 
 def test_reversed_and_zero_length_intervals_are_dropped() -> None:
-    """166 y 21 046 filas reales; un intervalo negativo corrompe la suma acumulada."""
+    """166 and 21,046 real rows; a negative interval corrupts the cumulative sum."""
     frame = events(
         raw_row("1A", "03/01/2019 02:00:00 AM", "03/01/2019 01:00:00 AM"),
         raw_row("2A", "03/01/2019 01:00:00 AM", "03/01/2019 01:00:00 AM"),
@@ -218,7 +219,7 @@ def test_segment_id_is_order_independent() -> None:
 
 
 def test_segment_id_matches_the_crosswalk_rule() -> None:
-    """La misma regla que usa el cruce con la geometría, en polars."""
+    """The same rule used to join against the geometry dataset, in polars."""
     produced = events(raw_row("1A", "03/01/2019 12:00:00 AM", "03/01/2019 01:00:00 AM"))
 
     expected = segment_id(key("COLLINS STREET", "RUSSELL STREET", "EXHIBITION STREET"))
@@ -254,7 +255,7 @@ def test_targets_look_forward_by_the_horizon() -> None:
     frame = add_targets(occupancy_frame([3, 2, 1, 0, 2]), horizons=(5, 10))
 
     assert frame["free_bays_h5"].to_list() == [2, 1, 0, 2, None]
-    # El tercer instante tiene 0 plazas libres en t+5: el objetivo es False.
+    # The third instant has 0 free bays at t+5, so the target is False.
     assert frame["target_h5"].to_list() == [True, True, False, True, None]
     assert frame["free_bays_h10"].to_list() == [1, 0, 2, None, None]
 
@@ -266,7 +267,7 @@ def test_target_is_false_only_when_the_segment_is_full() -> None:
 
 
 def test_targets_at_the_end_are_null_not_imputed() -> None:
-    """Rellenarlos inventaría etiquetas."""
+    """Filling them in would invent labels."""
     frame = add_targets(occupancy_frame([3, 3]), horizons=(30,))
 
     assert frame["target_h30"].to_list() == [None, None]
@@ -284,7 +285,7 @@ def test_lags_look_backward(tmp_path: object) -> None:
 
 
 def test_trends_capture_direction() -> None:
-    """Dos tramos con la misma ocupación y futuros opuestos no son iguales."""
+    """Two segments with the same occupancy and opposite futures are not alike."""
     emptying = occupancy_frame([1, 2, 3]).with_columns(
         occupancy_rate=pl.col("occupied_bays") / pl.col("total_bays")
     )
@@ -337,7 +338,7 @@ def test_neighbour_features_aggregate_the_same_instant() -> None:
 
 
 def test_segments_without_neighbours_get_nulls_not_zeros() -> None:
-    """Un cero diría 'los vecinos están llenos', que es una afirmación."""
+    """A zero would say 'the neighbours are full', which is a claim."""
     frame = occupancy_frame([2]).with_columns(
         occupancy_rate=pl.col("occupied_bays") / pl.col("total_bays")
     )
@@ -398,7 +399,7 @@ def test_split_covers_every_row_exactly_once() -> None:
 def test_split_rejects_inverted_boundaries() -> None:
     frame = build_dataset(occupancy_frame([3] * 10), {"A|B|C": frozenset()})
 
-    with pytest.raises(ValueError, match="posterior"):
+    with pytest.raises(ValueError, match="later than"):
         temporal_split(frame, train_end=T0 + dt.timedelta(hours=2), validation_end=T0)
 
 

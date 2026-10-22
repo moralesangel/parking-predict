@@ -1,13 +1,13 @@
-"""Tests de la API del mapa en tiempo real.
+"""Tests for the real-time map API.
 
-Lo que más importa proteger aquí:
+What matters most to protect here:
 
-- Una plaza sin lectura fiable nunca se devuelve como `free`. Es el error que
-  convertiría el producto en un mentiroso.
-- El endpoint devuelve por defecto TODAS las plazas, incluidas las no fiables,
-  porque el mapa necesita pintar "sin dato" como estado propio.
-- La API publica la antigüedad de sus propios datos: si el poller muere, un
-  snapshot viejo tiene que notarse.
+- A bay without a reliable reading is never returned as `free`. That is the
+  mistake that would turn the product into a liar.
+- By default the endpoint returns ALL bays, unreliable ones included, because
+  the map needs to paint "no data" as a state of its own.
+- The API publishes the age of its own data: if the poller dies, a stale
+  snapshot has to be visible.
 """
 
 from __future__ import annotations
@@ -86,17 +86,17 @@ def test_live_returns_every_bay_including_the_unreliable(client: TestClient) -> 
 
 
 def test_unreliable_bays_are_unknown_never_free(client: TestClient) -> None:
-    """Un sensor congelado puede estar sobre un coche: no es una plaza libre."""
+    """A frozen sensor may be sitting under a car: that is not a free bay."""
     bays = {bay["kerbsideid"]: bay for bay in client.get("/bays/live").json()["bays"]}
 
     assert bays[1]["state"] == "free"
     assert bays[2]["state"] == "occupied"
-    assert bays[3]["state"] == "unknown"  # offline, aunque su lectura diga "ocupada"
-    assert bays[4]["state"] == "unknown"  # stuck, aunque su lectura diga "libre"
+    assert bays[3]["state"] == "unknown"  # offline, even though its reading says "occupied"
+    assert bays[4]["state"] == "unknown"  # stuck, even though its reading says "free"
 
 
 def test_quality_reason_is_exposed(client: TestClient) -> None:
-    """`offline` y `stuck` son ambos 'sin dato', pero su causa es distinta."""
+    """`offline` and `stuck` are both "no data", but their cause differs."""
     bays = {bay["kerbsideid"]: bay for bay in client.get("/bays/live").json()["bays"]}
 
     assert bays[3]["quality"] == "offline"
@@ -116,7 +116,7 @@ def test_summary_counts_only_reliable_bays_as_free(client: TestClient) -> None:
 
 
 def test_reliable_only_filters_bays_but_not_the_summary(client: TestClient) -> None:
-    """La cobertura debe seguir significando lo mismo aunque se filtren las plazas."""
+    """Coverage must keep meaning the same thing even when bays are filtered."""
     body = client.get("/bays/live", params={"reliable_only": True}).json()
 
     assert len(body["bays"]) == 2
@@ -126,7 +126,7 @@ def test_reliable_only_filters_bays_but_not_the_summary(client: TestClient) -> N
 
 
 def test_occupancy_is_null_when_nothing_is_reliable(settings: Settings) -> None:
-    """`null` significa 'no se sabe'; un 0 significaría 'todo libre'."""
+    """`null` means "unknown"; a 0 would mean "everything free"."""
     write_snapshot(settings.data_dir, reading(1, live=False), reading(2, live=False))
     client = TestClient(create_app(settings))
 
@@ -137,7 +137,7 @@ def test_occupancy_is_null_when_nothing_is_reliable(settings: Settings) -> None:
 
 
 def test_response_carries_the_data_attribution(client: TestClient) -> None:
-    """La licencia CC BY obliga a atribuir también en la respuesta de la API."""
+    """The CC BY licence requires attribution in the API response too."""
     body = client.get("/bays/live").json()
 
     assert "City of Melbourne" in body["attribution"]
@@ -159,7 +159,7 @@ def test_null_zone_is_served_as_null(settings: Settings) -> None:
     assert client.get("/bays/live").json()["bays"][0]["zone_number"] is None
 
 
-# --- frescura ---------------------------------------------------------------
+# --- freshness --------------------------------------------------------------
 
 
 def test_snapshot_age_is_reported(client: TestClient) -> None:
@@ -170,7 +170,7 @@ def test_snapshot_age_is_reported(client: TestClient) -> None:
 
 
 def test_old_snapshot_is_flagged_as_stale(settings: Settings) -> None:
-    """Si el poller muere, servir datos viejos en silencio sería el peor fallo."""
+    """If the poller dies, silently serving old data would be the worst failure."""
     old = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=STALE_AFTER_SECONDS + 600)
     write_snapshot(settings.data_dir, reading(1, batch=old), batch=old)
     client = TestClient(create_app(settings))
@@ -235,7 +235,7 @@ def test_health_is_ok_with_a_fresh_snapshot(settings: Settings) -> None:
 
 
 def test_health_reports_stale_without_failing(settings: Settings) -> None:
-    """200 con status 'stale' distingue 'API caída' de 'datos parados'."""
+    """200 with status 'stale' distinguishes "API down" from "data stopped"."""
     old = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=STALE_AFTER_SECONDS + 600)
     write_snapshot(settings.data_dir, reading(1, batch=old), batch=old)
     client = TestClient(create_app(settings))
@@ -256,11 +256,11 @@ def test_health_reports_missing_data(settings: Settings) -> None:
     assert body["snapshot"] is None
 
 
-# --- sin datos --------------------------------------------------------------
+# --- no data ----------------------------------------------------------------
 
 
 def test_endpoints_return_503_without_snapshots(settings: Settings) -> None:
-    """503 y no 404: el recurso existe, lo que falta es que el poller produzca."""
+    """503 rather than 404: the resource exists, the poller just has not produced."""
     client = TestClient(create_app(settings))
 
     assert client.get("/bays/live").status_code == 503
@@ -279,22 +279,22 @@ def test_frontend_is_served_at_the_root(client: TestClient) -> None:
 
 
 def test_frontend_does_not_shadow_the_api(client: TestClient) -> None:
-    """El montaje estático va en `/`; las rutas de la API deben seguir ganando."""
+    """The static mount sits at `/`; the API routes must still win."""
     assert client.get("/bays/live").status_code == 200
     assert client.get("/health").status_code == 200
 
 
 def test_api_still_works_without_the_frontend(settings: Settings, tmp_path: Path) -> None:
-    """Un despliegue sin `web/` debe servir la API igual y dar 404 en `/`."""
+    """A deployment without `web/` must still serve the API and 404 on `/`."""
     write_snapshot(settings.data_dir, reading(1))
-    headless = settings.model_copy(update={"web_dir": tmp_path / "no-existe"})
+    headless = settings.model_copy(update={"web_dir": tmp_path / "does-not-exist"})
     client = TestClient(create_app(headless))
 
     assert client.get("/bays/live").status_code == 200
     assert client.get("/").status_code == 404
 
 
-# --- repositorio ------------------------------------------------------------
+# --- repository -------------------------------------------------------------
 
 
 def test_repository_reuses_the_cached_frame(settings: Settings) -> None:
@@ -304,11 +304,11 @@ def test_repository_reuses_the_cached_frame(settings: Settings) -> None:
     first = repository.load()
     second = repository.load()
 
-    assert first.frame is second.frame, "el mismo lote no debe releerse del disco"
+    assert first.frame is second.frame, "the same batch must not be re-read from disk"
 
 
 def test_repository_age_grows_between_calls(settings: Settings) -> None:
-    """La caché reutiliza el frame pero la antigüedad debe seguir avanzando."""
+    """The cache reuses the frame but the age must keep moving."""
     write_snapshot(settings.data_dir, reading(1))
     repository = SnapshotRepository(settings)
     now = dt.datetime.now(dt.UTC)
@@ -331,10 +331,10 @@ def test_repository_picks_up_a_new_batch(settings: Settings) -> None:
 
 
 def test_repository_orders_by_batch_not_mtime(settings: Settings) -> None:
-    """Ordenar por mtime daría el orden equivocado al recuperar un histórico."""
+    """Sorting by mtime would give the wrong order when restoring an archive."""
     newer = BATCH + dt.timedelta(minutes=10)
     write_snapshot(settings.data_dir, reading(1, batch=newer), batch=newer)
-    # Escrito después, pero su lote es anterior.
+    # Written later, but its batch stamp is older.
     write_snapshot(settings.data_dir, reading(2, batch=BATCH), batch=BATCH)
 
     assert SnapshotRepository(settings).load().meta.feed_lastupdated == newer

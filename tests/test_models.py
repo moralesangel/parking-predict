@@ -1,13 +1,13 @@
-"""Tests de `parking.models`.
+"""Tests for `parking.models`.
 
-Lo que más importa proteger:
+What matters most to protect:
 
-- La persistencia es la referencia del plan y tiene que ser exactamente eso:
-  el estado actual, sin aprender nada.
-- Las métricas tienen que castigar lo que debe castigarse. Un modelo que
-  contesta siempre "sí" acierta el 95 % de las veces, así que si la métrica no
-  lo penaliza, no sirve.
-- Ningún modelo puede mirar al futuro al entrenarse.
+- Persistence is the plan's reference and must be exactly that: the current
+  state, learning nothing.
+- The metrics have to punish what deserves punishing. A model that always
+  answers "yes" is right 95% of the time, so a metric that does not penalise
+  that is useless.
+- No model may look into the future while training.
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ from parking.models.evaluation import (
 )
 from parking.models.gbm import DEFAULT_PARAMS, GradientBoostingModel
 
-#: `min_data_in_leaf` vale 200 en produccion, que es lo correcto con 5 M de
-#: filas pero impide cualquier division con los pocos cientos de un test: el
-#: modelo no partiria ni una vez y predeciria una constante.
+#: `min_data_in_leaf` is 200 in production, which is right with 5M rows but
+#: makes any split impossible with the few hundred rows of a test: the model
+#: would never split once and would predict a constant.
 TINY_PARAMS = dict(DEFAULT_PARAMS) | {"min_data_in_leaf": 5, "num_leaves": 7}
 
 T0 = dt.datetime(2019, 6, 1)
@@ -67,7 +67,7 @@ def frame(
     )
 
 
-# --- persistencia -----------------------------------------------------------
+# --- persistence ------------------------------------------------------------
 
 
 def test_persistence_returns_the_current_state() -> None:
@@ -77,7 +77,7 @@ def test_persistence_returns_the_current_state() -> None:
 
 
 def test_persistence_learns_nothing() -> None:
-    """Es determinista a propósito: es la referencia, no un modelo."""
+    """Deterministic on purpose: it is the reference, not a model."""
     optimistic = PersistenceBaseline().fit(frame([0, 0], [True, True]), "target_h5")
     pessimistic = PersistenceBaseline().fit(frame([0, 0], [False, False]), "target_h5")
 
@@ -86,7 +86,7 @@ def test_persistence_learns_nothing() -> None:
 
 
 def test_calibrated_persistence_learns_the_survival_rate() -> None:
-    """De las veces con sitio, ¿en qué fracción seguía habiéndolo?"""
+    """Of the times there was space, in what fraction was there still space?"""
     train = frame([3, 3, 3, 3, 0, 0], [True, True, True, False, True, False])
 
     model = CalibratedPersistence().fit(train, "target_h5")
@@ -96,7 +96,7 @@ def test_calibrated_persistence_learns_the_survival_rate() -> None:
 
 
 def test_calibrated_persistence_ignores_null_targets() -> None:
-    """Las últimas filas de cada tramo no tienen futuro observado."""
+    """The last rows of each segment have no observed future."""
     train = frame([3, 3, 3], [True, True, None])
 
     model = CalibratedPersistence().fit(train, "target_h5")
@@ -109,11 +109,12 @@ def test_calibrated_persistence_falls_back_on_unseen_states() -> None:
 
     model = CalibratedPersistence().fit(train, "target_h5")
 
-    # Nunca vio un tramo lleno: usa la tasa global en vez de inventar un 0,5.
+    # It never saw a full segment: it uses the global rate instead of making
+    # up a 0.5.
     assert model.predict_proba(frame([0], [None]))[0] == pytest.approx(0.5)
 
 
-# --- media histórica --------------------------------------------------------
+# --- historical mean --------------------------------------------------------
 
 
 def test_historical_mean_uses_segment_day_and_time() -> None:
@@ -127,7 +128,7 @@ def test_historical_mean_uses_segment_day_and_time() -> None:
 
 
 def test_historical_mean_ignores_the_current_state() -> None:
-    """Es el contrapunto de la persistencia: solo rutina, nada de situación."""
+    """It is persistence's counterpoint: routine only, no situation."""
     train = frame([3] * 4, [True, True, True, True])
 
     model = HistoricalMeanBaseline().fit(train, "target_h5")
@@ -138,12 +139,12 @@ def test_historical_mean_ignores_the_current_state() -> None:
 
 
 def test_historical_mean_falls_back_through_the_hierarchy() -> None:
-    """Un tramo que siempre está lleno no tiene un 50 % solo porque falte su martes."""
+    """An always-full segment does not get 50% just because its Tuesday is missing."""
     train = frame([3] * 2, [False, False], day=1, minute=600)
 
     model = HistoricalMeanBaseline().fit(train, "target_h5")
 
-    # Mismo tramo y franja, otro día: cae a la media del tramo+franja.
+    # Same segment and bucket, different day: falls back to segment+bucket.
     assert model.predict_proba(frame([3], [None], day=5, minute=600))[0] == pytest.approx(0.0)
 
 
@@ -155,7 +156,7 @@ def test_historical_mean_falls_back_to_global_for_unknown_segments() -> None:
     assert model.predict_proba(frame([3], [None], segment="X|Y|Z"))[0] == pytest.approx(0.5)
 
 
-# --- métricas ---------------------------------------------------------------
+# --- metrics ----------------------------------------------------------------
 
 
 def test_brier_is_zero_for_perfect_predictions() -> None:
@@ -168,7 +169,7 @@ def test_brier_punishes_confident_mistakes_hardest() -> None:
 
 
 def test_log_loss_is_finite_for_a_wrong_certainty() -> None:
-    """Sin recorte sería infinito, y comparar infinitos no informa de nada."""
+    """Without clipping it would be infinite, and comparing infinities says nothing."""
     value = log_loss(np.array([1.0]), np.array([0.0]))
 
     assert np.isfinite(value)
@@ -184,7 +185,7 @@ def test_clip_keeps_probabilities_inside_the_open_interval() -> None:
 
 
 def test_accuracy_would_hide_a_useless_model_but_brier_does_not() -> None:
-    """Con 95 % de positivos, contestar siempre 'sí' acierta el 95 %."""
+    """With 95% positives, always answering yes is right 95% of the time."""
     truth = np.array([1.0] * 95 + [0.0] * 5)
     always_yes = np.full(100, 1.0)
     honest = np.full(100, 0.95)
@@ -206,7 +207,7 @@ def test_evaluate_reports_the_base_rate() -> None:
     assert metrics["n"] == 4
 
 
-# --- calibración ------------------------------------------------------------
+# --- calibration ------------------------------------------------------------
 
 
 def test_calibration_curve_detects_overconfidence() -> None:
@@ -236,14 +237,14 @@ def test_calibration_curve_puts_probability_one_in_the_last_bin() -> None:
 
 
 def test_calibration_curve_omits_empty_bins() -> None:
-    """Un baseline emite dos valores: mostrar ocho filas vacías confundiría."""
+    """A baseline emits two values: showing eight empty rows would confuse."""
     truth = np.array([1.0, 0.0])
     two_valued = np.array([1.0, 0.0])
 
     assert calibration_curve(truth, two_valued).height == 2
 
 
-# --- desgloses --------------------------------------------------------------
+# --- breakdowns -------------------------------------------------------------
 
 
 def test_breakdown_splits_by_group() -> None:
@@ -264,11 +265,11 @@ def test_occupancy_bucket_separates_full_from_nearly_full() -> None:
     data = frame([0, 1, 2, 4, 9], [None] * 5).with_columns(occupancy_bucket())
 
     assert data["occupancy_bucket"].to_list() == [
-        "0 libres (lleno)",
-        "1 libre",
-        "2 libres",
-        "3-5 libres",
-        "6+ libres",
+        "0 free (full)",
+        "1 free",
+        "2 free",
+        "3-5 free",
+        "6+ free",
     ]
 
 

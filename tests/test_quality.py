@@ -1,7 +1,8 @@
-"""Tests de `parking.quality`.
+"""Tests for `parking.quality`.
 
-El invariante que más importa: ninguna función borra filas. Un sensor malo se
-marca y sigue en la tabla, porque si desaparece no se puede medir la cobertura.
+The invariant that matters most: no function drops rows. A bad sensor is
+flagged and stays in the table, because if it disappears coverage cannot be
+measured.
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ def test_sensor_absent_from_the_batch_is_offline() -> None:
 
 
 def test_reporting_but_frozen_sensor_is_stuck() -> None:
-    """El fallo más numeroso: el relé lo reporta y el sensor está congelado."""
+    """The most numerous failure: the relay reports it and the sensor is frozen."""
     result = annotate_quality(frame(reading(1, status_age_hours=150 * 24)))
 
     assert result["quality"].to_list() == ["stuck"]
@@ -79,14 +80,14 @@ def test_reporting_but_frozen_sensor_is_stuck() -> None:
 
 
 def test_offline_wins_over_stuck() -> None:
-    """Si además está fuera del lote, la causa raíz es el relé: se marca offline."""
+    """Out of the batch too: the root cause is the relay, so it is marked offline."""
     result = annotate_quality(frame(reading(1, live=False, status_age_hours=500)))
 
     assert result["quality"].to_list() == ["offline"]
 
 
 def test_threshold_boundary_is_exclusive() -> None:
-    """Justo en el umbral todavía es fiable; un pelo por encima, no."""
+    """Exactly at the threshold it is still reliable; a hair above, it is not."""
     result = annotate_quality(
         frame(reading(1, status_age_hours=24.0), reading(2, status_age_hours=24.1)),
         stuck_after_hours=24.0,
@@ -103,7 +104,7 @@ def test_threshold_is_configurable() -> None:
 
 
 def test_age_is_measured_against_the_batch_not_now() -> None:
-    """Medir contra `now()` haría irreproducible el reprocesado de datos viejos."""
+    """Measuring against `now()` would make reprocessing old data irreproducible."""
     old_batch = dt.datetime(2020, 1, 1, tzinfo=dt.UTC)
     result = annotate_quality(frame(reading(1, status_age_hours=3, batch=old_batch)))
 
@@ -112,7 +113,7 @@ def test_age_is_measured_against_the_batch_not_now() -> None:
 
 
 def test_nothing_is_ever_dropped() -> None:
-    """Regla del plan: nunca borrar en silencio."""
+    """Plan rule: never delete silently."""
     readings = frame(
         reading(1),
         reading(2, live=False),
@@ -126,26 +127,26 @@ def test_nothing_is_ever_dropped() -> None:
 
 
 def test_quality_is_a_closed_enum() -> None:
-    """El conjunto de estados es cerrado: no se puede escribir uno inventado.
+    """The set of states is closed: an invented one cannot be written.
 
-    Ojo con lo que el Enum NO protege: comparar la columna con un valor
-    inexistente devuelve 0 filas en silencio, no lanza. Contra eso solo valen
-    las constantes de `QUALITY_VALUES`.
+    Note what the Enum does NOT protect: comparing the column against a
+    non-existent value silently returns 0 rows, it does not raise. Only the
+    `QUALITY_VALUES` constants guard against that.
     """
     result = annotate_quality(frame(reading(1)))
 
     assert result.schema["quality"] == pl.Enum(QUALITY_VALUES)
     assert result.schema["quality"].categories.to_list() == list(QUALITY_VALUES)
     with pytest.raises(pl.exceptions.InvalidOperationError):
-        result.with_columns(pl.lit("inventado").cast(result.schema["quality"]))
+        result.with_columns(pl.lit("invented").cast(result.schema["quality"]))
 
 
 def test_missing_columns_are_rejected() -> None:
-    with pytest.raises(ValueError, match="faltan columnas"):
+    with pytest.raises(ValueError, match="missing columns"):
         annotate_quality(pl.DataFrame({"kerbsideid": [1]}))
 
 
-# --- resumen y ocupación ----------------------------------------------------
+# --- summary and occupancy --------------------------------------------------
 
 
 def test_quality_summary_counts_every_state() -> None:
@@ -161,7 +162,7 @@ def test_quality_summary_counts_every_state() -> None:
 
 
 def test_occupancy_excludes_unreliable_readings() -> None:
-    """En el feed real la diferencia llega a 7,6 puntos en hora punta."""
+    """In the real feed the difference reaches 7.6 points at peak hours."""
     result = annotate_quality(
         frame(
             reading(1, occupied=False),
@@ -176,7 +177,7 @@ def test_occupancy_excludes_unreliable_readings() -> None:
 
 
 def test_occupancy_without_reliable_readings_is_none() -> None:
-    """`None` significa 'no se sabe'; un 0.0 significaría 'todo libre'."""
+    """`None` means 'unknown'; a 0.0 would mean 'everything free'."""
     result = annotate_quality(frame(reading(1, live=False)))
 
     assert occupancy(result) is None
@@ -187,7 +188,7 @@ def test_summary_requires_annotation() -> None:
         quality_summary(frame(reading(1)))
 
 
-# --- cobertura --------------------------------------------------------------
+# --- coverage ---------------------------------------------------------------
 
 
 def test_coverage_by_zone() -> None:
@@ -209,7 +210,7 @@ def test_coverage_by_zone() -> None:
 
 
 def test_coverage_by_zone_keeps_bays_without_a_zone() -> None:
-    """520 de 6324 plazas reales no tienen zona; descartarlas ocultaría el problema."""
+    """520 of 6324 real bays have no zone; dropping them would hide the problem."""
     result = annotate_quality(frame(reading(1, zone=None), reading(2, zone=7001)))
 
     coverage = coverage_by_zone(result)
@@ -218,7 +219,7 @@ def test_coverage_by_zone_keeps_bays_without_a_zone() -> None:
 
 
 def test_coverage_by_zone_separates_bays_from_readings() -> None:
-    """Con varios snapshots, 1 plaza leída 3 veces es 1 plaza, no 3."""
+    """Across several snapshots, 1 bay read 3 times is 1 bay, not 3."""
     batches = [BATCH + dt.timedelta(minutes=2 * i) for i in range(3)]
     result = annotate_quality(frame(*(reading(1, zone=7001, batch=b) for b in batches)))
 
@@ -251,11 +252,11 @@ def test_coverage_requires_annotation() -> None:
         coverage_by_zone(frame(reading(1)))
 
 
-# --- sensores intermitentes -------------------------------------------------
+# --- flapping sensors -------------------------------------------------------
 
 
 def test_flapping_sensor_is_detected() -> None:
-    """Un sensor que entra y sale mueve el denominador de su zona sin que se mueva un coche."""
+    """A flapping sensor moves its zone's denominator without a car moving."""
     batches = [BATCH + dt.timedelta(minutes=2 * i) for i in range(4)]
     readings = [
         reading(1, batch=batches[0], live=True),
@@ -267,7 +268,7 @@ def test_flapping_sensor_is_detected() -> None:
 
     result = flapping_sensors(annotate_quality(frame(*readings)))
 
-    assert result["kerbsideid"].to_list() == [1], "el sensor estable no debe aparecer"
+    assert result["kerbsideid"].to_list() == [1], "the stable sensor must not appear"
     assert result["transitions"].item() == 3
 
 
@@ -282,7 +283,7 @@ def test_flapping_ignores_short_series() -> None:
     assert result.height == 0
 
 
-# --- huecos -----------------------------------------------------------------
+# --- gaps -------------------------------------------------------------------
 
 
 def stamps(*minutes: int) -> list[dt.datetime]:
@@ -294,7 +295,7 @@ def test_regular_series_has_no_gaps() -> None:
 
 
 def test_single_cycle_delay_is_tolerated() -> None:
-    """El feed se retrasa un ciclo de vez en cuando sin que falte nada."""
+    """The feed occasionally runs one cycle late without anything missing."""
     assert find_gaps(stamps(0, 2, 6)) == []
 
 
@@ -335,7 +336,7 @@ def test_continuity_report_on_empty_series() -> None:
     assert report["completeness_pct"] is None
 
 
-# --- lectura de disco -------------------------------------------------------
+# --- reading from disk ------------------------------------------------------
 
 
 def test_snapshot_timestamps_are_read_from_filenames(tmp_path: Path) -> None:
@@ -351,8 +352,8 @@ def test_snapshot_timestamps_are_read_from_filenames(tmp_path: Path) -> None:
 
 
 def test_snapshot_timestamps_ignores_foreign_files(tmp_path: Path) -> None:
-    """Un fichero ajeno no debe romper el informe de continuidad."""
-    (tmp_path / "snapshot_no-es-una-fecha.parquet").touch()
+    """A foreign file must not break the continuity report."""
+    (tmp_path / "snapshot_not-a-date.parquet").touch()
 
     assert snapshot_timestamps(tmp_path) == []
 

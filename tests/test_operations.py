@@ -1,11 +1,11 @@
-"""Tests de `parking.models.registry` y `parking.monitoring`.
+"""Tests for `parking.models.registry` and `parking.monitoring`.
 
-Lo que más importa proteger:
+What matters most to protect:
 
-- **Un modelo que no bate a la persistencia no se promociona jamás.** Es el
-  único salvaguarda entre un reentrenamiento automático malo y producción.
-- Los rechazos se registran igual que las promociones.
-- El backtest no evalúa sobre filas inventadas por el relleno de huecos.
+- **A model that does not beat persistence is never promoted.** It is the only
+  safeguard between a bad automated retrain and production.
+- Rejections are recorded just like promotions.
+- The backtest does not evaluate over rows the gap-filling invented.
 """
 
 from __future__ import annotations
@@ -33,19 +33,19 @@ T0 = dt.datetime(2026, 10, 22, 12, 0)
 SEGMENT = "A|B|C"
 
 
-# --- puerta de promocion ----------------------------------------------------
+# --- promotion gate ---------------------------------------------------------
 
 
 def test_model_that_loses_to_persistence_is_never_promoted() -> None:
-    """El salvaguarda central de todo el reentrenamiento automático."""
+    """The central safeguard of the whole automated retraining loop."""
     decision = decide(candidate_brier=0.05, persistence_brier=0.04, production_brier=None)
 
     assert decision.promoted is False
-    assert "no bate a la persistencia" in decision.reason
+    assert "does not beat persistence" in decision.reason
 
 
 def test_tying_with_persistence_is_not_enough() -> None:
-    """Empatar significa que el pipeline de ML no aporta nada."""
+    """A tie means the ML pipeline adds nothing."""
     assert decide(0.04, 0.04, None).promoted is False
 
 
@@ -53,27 +53,27 @@ def test_first_model_only_needs_to_beat_persistence() -> None:
     decision = decide(candidate_brier=0.03, persistence_brier=0.04, production_brier=None)
 
     assert decision.promoted is True
-    assert "primer modelo" in decision.reason
+    assert "first model" in decision.reason
 
 
 def test_clear_improvement_over_production_is_promoted() -> None:
     decision = decide(candidate_brier=0.02, persistence_brier=0.04, production_brier=0.03)
 
     assert decision.promoted is True
-    assert "mejora" in decision.reason
+    assert "improves" in decision.reason
 
 
 def test_regression_beyond_tolerance_is_rejected() -> None:
-    """Reentrenar no debe ser un paso atrás."""
+    """Retraining must not be a step backwards."""
     production = 0.020
     decision = decide(production * 1.5, persistence_brier=0.09, production_brier=production)
 
     assert decision.promoted is False
-    assert "empeora" in decision.reason
+    assert "regresses" in decision.reason
 
 
 def test_small_regression_within_tolerance_is_accepted() -> None:
-    """Sin margen, el modelo cambiaría por diferencias que no significan nada."""
+    """Without a margin the model would change over differences that mean nothing."""
     production = 0.020
     candidate = production * (1 + REGRESSION_TOLERANCE / 2)
 
@@ -85,11 +85,11 @@ def test_decision_reports_whether_it_beat_persistence() -> None:
     assert decide(0.05, 0.04, None).beats_persistence is False
 
 
-# --- registro ---------------------------------------------------------------
+# --- registry ---------------------------------------------------------------
 
 
 def test_history_records_rejections_too(tmp_path: Path) -> None:
-    """Saber que lleva semanas sin promocionar es información operativa."""
+    """Knowing it has gone weeks without promoting is operational information."""
     registry = ModelRegistry(tmp_path)
 
     registry.record(decide(0.05, 0.04, None), version="v1")
@@ -111,27 +111,27 @@ def test_no_production_metrics_before_promotion(tmp_path: Path) -> None:
 def test_promote_archives_and_points_production(tmp_path: Path) -> None:
     candidate = tmp_path / "candidate"
     candidate.mkdir()
-    (candidate / "model.txt").write_text("arboles", encoding="utf-8")
+    (candidate / "model.txt").write_text("trees", encoding="utf-8")
     registry = ModelRegistry(tmp_path / "registry")
 
     registry.promote(candidate, version="v1", metrics={"brier": 0.03})
 
-    assert (registry.production_dir / "model.txt").read_text(encoding="utf-8") == "arboles"
+    assert (registry.production_dir / "model.txt").read_text(encoding="utf-8") == "trees"
     assert (registry.versions_dir / "v1" / "model.txt").exists()
     assert registry.production_metrics() == {"brier": 0.03}
 
 
 def test_promote_replaces_the_previous_production(tmp_path: Path) -> None:
     registry = ModelRegistry(tmp_path / "registry")
-    for version, content in (("v1", "viejo"), ("v2", "nuevo")):
+    for version, content in (("v1", "old"), ("v2", "new")):
         candidate = tmp_path / version
         candidate.mkdir()
         (candidate / "model.txt").write_text(content, encoding="utf-8")
         registry.promote(candidate, version=version, metrics={"brier": 0.03})
 
-    assert (registry.production_dir / "model.txt").read_text(encoding="utf-8") == "nuevo"
-    # La version anterior sigue archivada: se puede volver atras.
-    assert (registry.versions_dir / "v1" / "model.txt").read_text(encoding="utf-8") == "viejo"
+    assert (registry.production_dir / "model.txt").read_text(encoding="utf-8") == "new"
+    # The previous version stays archived: rolling back is possible.
+    assert (registry.versions_dir / "v1" / "model.txt").read_text(encoding="utf-8") == "old"
 
 
 # --- drift ------------------------------------------------------------------
@@ -143,24 +143,24 @@ def test_identical_distributions_have_no_drift() -> None:
     result = population_stability_index(values, values.copy())
 
     assert result.psi == pytest.approx(0.0, abs=1e-9)
-    assert result.level == "estable"
+    assert result.level == "stable"
     assert result.needs_attention is False
 
 
 def test_shifted_distribution_is_flagged() -> None:
-    """Una ciudad medio vacía frente a una medio llena tiene que saltar."""
+    """A half-empty city against a half-full one has to fire."""
     empty = np.random.default_rng(0).uniform(0.0, 0.3, 5000)
     full = np.random.default_rng(1).uniform(0.7, 1.0, 5000)
 
     result = population_stability_index(empty, full)
 
     assert result.psi > INVESTIGATE_ABOVE
-    assert result.level == "fuerte"
+    assert result.level == "large"
     assert result.needs_attention is True
 
 
 def test_psi_is_finite_when_a_bin_is_empty() -> None:
-    """Sin el epsilon, un tramo vacío daría log(0) y el PSI sería infinito."""
+    """Without the epsilon an empty band would give log(0) and an infinite PSI."""
     reference = np.full(100, 0.05)
     current = np.full(100, 0.95)
 
@@ -221,17 +221,17 @@ def test_backtest_compares_against_persistence() -> None:
 
     assert result is not None
     assert result.model_brier == 0.0
-    # La persistencia se equivoca siempre en una serie que alterna.
+    # Persistence is wrong every time over an alternating series.
     assert result.persistence_brier == 1.0
     assert result.is_degraded is False
 
 
 def test_backtest_flags_a_model_worse_than_persistence() -> None:
-    """La alarma es `is_degraded`, y no depende del skill.
+    """The alarm is `is_degraded`, and it does not depend on the skill score.
 
-    Con una serie constante la persistencia acierta siempre (Brier 0) y el
-    skill queda indefinido: dividir por cero. `is_degraded` sigue siendo
-    correcto, que es lo que dispara el aviso.
+    Over a constant series persistence is always right (Brier 0) and the skill
+    is undefined: a division by zero. `is_degraded` is still correct, and that
+    is what raises the alert.
     """
     frame = live_frame([3, 3, 3, 3])
     pessimistic = np.zeros(4)
@@ -244,7 +244,7 @@ def test_backtest_flags_a_model_worse_than_persistence() -> None:
 
 
 def test_skill_is_negative_when_the_model_loses_to_an_imperfect_reference() -> None:
-    """La persistencia falla dos de cinco veces; el modelo, cuatro."""
+    """Persistence is wrong two times out of five; the model, four."""
     frame = live_frame([3, 3, 3, 3, 0, 3])
     always_full = np.zeros(6)
 
@@ -257,14 +257,14 @@ def test_skill_is_negative_when_the_model_loses_to_an_imperfect_reference() -> N
 
 
 def test_backtest_excludes_interpolated_rows() -> None:
-    """Evaluarlas mediría la calidad del relleno, no la del modelo."""
+    """Evaluating them would measure the gap-filling, not the model."""
     frame = live_frame([3, 3, 3, 3], interpolated=[False, True, True, False])
     probabilities = np.full(4, 0.9)
 
     result = backtest(frame, probabilities, horizon_minutes=5)
 
     assert result is not None
-    assert result.n == 1  # solo la primera: la ultima no tiene futuro observado
+    assert result.n == 1  # only the first: the last has no observed future
 
 
 def test_backtest_can_include_interpolated_rows() -> None:
@@ -277,7 +277,7 @@ def test_backtest_can_include_interpolated_rows() -> None:
 
 
 def test_backtest_returns_none_without_realised_outcomes() -> None:
-    """Mejor nada que métricas sobre cero filas."""
+    """Better nothing than metrics over zero rows."""
     frame = live_frame([3, 3])
 
     assert backtest(frame, np.full(2, 0.9), horizon_minutes=30) is None
@@ -293,7 +293,7 @@ def test_backtest_result_serialises() -> None:
     assert isinstance(payload["is_degraded"], bool)
 
 
-# --- cobertura en el tiempo -------------------------------------------------
+# --- coverage over time -----------------------------------------------------
 
 
 def test_coverage_trend_buckets_by_hour() -> None:
