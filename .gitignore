@@ -1,5 +1,6 @@
-# Datos (nunca se versionan)
-data/
+# Datos (nunca se versionan). data/* en vez de data/ para poder
+# reincluir el .gitkeep que mantiene el directorio en el repo.
+data/*
 !data/.gitkeep
 
 # Python
@@ -22,8 +23,10 @@ htmlcov/
 # Entorno
 .env
 
-# Modelos entrenados y artefactos
-models/
+# Modelos entrenados y artefactos. Ancladas a la raiz: sin la barra
+# inicial, 'models/' tapaba tambien src/parking/models/.
+/models/
+/artifacts/
 *.pkl
 *.joblib
 *.txt.model
