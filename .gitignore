@@ -1,0 +1,35 @@
+# Datos (nunca se versionan)
+data/
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Herramientas
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# Entorno
+.env
+
+# Modelos entrenados y artefactos
+models/
+*.pkl
+*.joblib
+*.txt.model
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
