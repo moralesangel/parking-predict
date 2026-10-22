@@ -11,5 +11,5 @@ __pycache__/
 notebooks/
 docs/
 tests/
-scripts/
+# scripts/ SI entra: el servicio `operations` ejecuta monitor.py y retrain.py.
 .env

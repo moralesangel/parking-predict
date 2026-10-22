@@ -30,6 +30,36 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Job periodico: refresca el informe de monitorizacion e intenta reentrenar.
+  # Un bucle de `sleep` en vez de cron: el contenedor es de un solo proceso y
+  # anadir un demonio cron solo para esto complicaria los logs y la senal de
+  # parada. Si el job crece, se saca a un planificador de verdad.
+  operations:
+    build: .
+    image: parking-predict/poller
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          python scripts/monitor.py || echo "monitor fallo";
+          python scripts/retrain.py --horizon 15 || echo "retrain fallo";
+          sleep "${PARKING_OPERATIONS_INTERVAL_SECONDS:-86400}";
+        done
+    environment:
+      PARKING_DATA_DIR: /data
+      PARKING_STUCK_AFTER_HOURS: ${PARKING_STUCK_AFTER_HOURS:-24}
+    volumes:
+      - ./data:/data
+    user: "10001"
+    depends_on:
+      - poller
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   api:
     build: .
     image: parking-predict/poller

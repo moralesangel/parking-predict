@@ -22,6 +22,7 @@ RUN uv sync --locked --no-install-project --no-dev
 
 COPY src/ ./src/
 COPY web/ ./web/
+COPY scripts/ ./scripts/
 RUN uv sync --locked --no-dev
 
 # Usuario sin privilegios. El volumen de datos se monta con este UID (ver

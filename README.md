@@ -8,7 +8,7 @@ datos en tiempo real: cuando conduces 12 minutos hasta el destino, lo que import
 no es el estado actual de la zona sino su estado al llegar. La referencia a batir
 es, precisamente, "usar el estado actual" (baseline de persistencia).
 
-> Estado: **Fase 6 (prediccion en el producto) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
+> Estado: **Fase 7 (operacion) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
 
 ## Requisitos
 
@@ -55,6 +55,10 @@ uv run python scripts/plot_results.py
 
 # Geometria de referencia, que /predict necesita para situar los tramos
 uv run python scripts/fetch_reference.py
+
+# Operacion: informe de monitorizacion y job de reentrenamiento
+uv run python scripts/monitor.py
+uv run python scripts/retrain.py --horizon 15
 ```
 
 Mapa en tiempo real (API + frontend en http://localhost:8000):
@@ -63,7 +67,7 @@ Mapa en tiempo real (API + frontend en http://localhost:8000):
 uv run python -m uvicorn --factory parking.api.app:create_app --port 8000
 ```
 
-Con Docker, poller + API + mapa:
+Con Docker, poller + job de operacion + API + mapa:
 
 ```bash
 docker compose up --build       # -> http://localhost:8000
@@ -78,6 +82,7 @@ docker compose logs -f poller
 | `GET /predict?lat=&lon=&eta_minutes=` | Probabilidad de encontrar sitio al llegar, por zona |
 | `GET /zones/coverage` | Cobertura de sensores por zona |
 | `GET /health` | `ok`, `stale` o `no_data`, con la antiguedad del ultimo lote |
+| `GET /monitoring` | Ultimo informe de operacion (degradacion, drift, cobertura) |
 | `GET /docs` | OpenAPI interactivo |
 
 Dos decisiones que vienen de la Fase 2:
@@ -103,6 +108,7 @@ Dos decisiones que vienen de la Fase 2:
 | [`docs/data_quality.md`](docs/data_quality.md) | Los dos modos de fallo de los sensores y cuantas plazas son utilizables |
 | [`docs/dataset.md`](docs/dataset.md) | El problema de prediccion, la unidad espacial y como se construye el dataset |
 | [`docs/results.md`](docs/results.md) | Comparativa con los baselines, calibracion y donde el modelo si aporta |
+| [`docs/operations.md`](docs/operations.md) | Reentrenamiento con puerta de promocion y las tres senales de monitorizacion |
 
 Dos hallazgos que condicionan el resto del proyecto:
 

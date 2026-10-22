@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operación — parking-predict</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #5f6368; --border: #dadce0;
+    --card: #fafafa; --accent: #2a78d6;
+    --ok: #1a9850; --warn: #eda100; --bad: #d73027;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1f2023; --fg: #e8eaed; --muted: #9aa0a6; --border: #3c4043;
+            --card: #27282b; --accent: #3987e5; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 20px 48px; background: var(--bg); color: var(--fg);
+    font: 14px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+  a { color: var(--accent); }
+
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 8px; padding: 12px 14px; }
+  .card .k { font-size: 11px; text-transform: uppercase; letter-spacing: .03em;
+             color: var(--muted); }
+  .card .v { font-size: 25px; font-weight: 650; font-variant-numeric: tabular-nums;
+             line-height: 1.2; margin-top: 2px; }
+  .card .d { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em;
+       color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px;
+          font-size: 11px; font-weight: 600; }
+  .pill.ok   { background: color-mix(in srgb, var(--ok) 18%, transparent);   color: var(--ok); }
+  .pill.warn { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+  .pill.bad  { background: color-mix(in srgb, var(--bad) 18%, transparent);  color: var(--bad); }
+
+  .bar { height: 7px; background: var(--border); border-radius: 4px; overflow: hidden;
+         margin-top: 6px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  footer { margin-top: 36px; padding-top: 12px; border-top: 1px solid var(--border);
+           font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Operación</h1>
+  <p class="sub" id="generated">Cargando…</p>
+  <p class="sub"><a href="./">← volver al mapa</a></p>
+
+  <div id="content" hidden>
+    <h2>1. ¿El modelo sigue batiendo a la persistencia?</h2>
+    <p class="note">
+      Medido sobre los datos que el poller ya capturó: la predicción hecha en
+      <em>t</em> se compara con lo que de verdad pasó en <em>t+h</em>. Si el skill
+      cae a cero, el pipeline de ML ha dejado de pagar lo que cuesta.
+    </p>
+    <div class="scroll"><table id="degradation"></table></div>
+
+    <h2>2. Drift de la distribución de ocupación</h2>
+    <div class="grid" id="driftCards"></div>
+    <div class="scroll"><table id="driftBins"></table></div>
+
+    <h2>3. Cobertura de sensores</h2>
+    <div class="grid" id="coverageCards"></div>
+
+    <h2>Continuidad de la captura</h2>
+    <div class="grid" id="continuityCards"></div>
+
+    <h2>Historial de reentrenamiento</h2>
+    <p class="note">
+      Se registran también los rechazos. Saber que el modelo lleva semanas sin
+      promocionar porque no bate a la persistencia es información operativa.
+    </p>
+    <div class="scroll"><table id="history"></table></div>
+  </div>
+
+  <footer>
+    Datos de <a href="https://data.melbourne.vic.gov.au/" target="_blank" rel="noopener">City of
+    Melbourne Open Data</a>, licencia
+    <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.
+  </footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const pct = (v, digits = 1) => `${(v * 100).toFixed(digits)} %`;
+
+function card(key, value, detail = "", extra = "") {
+  return `<div class="card"><div class="k">${key}</div>
+          <div class="v">${value}</div>
+          <div class="d">${detail}</div>${extra}</div>`;
+}
+
+function table(target, headers, rows) {
+  $(target).innerHTML =
+    `<thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>`;
+}
+
+function render(d) {
+  const age = Math.round(d.age_seconds / 60);
+  $("generated").innerHTML =
+    `Informe generado hace ${age} min` +
+    (d.is_stale ? ` <span class="pill bad">el job no esta corriendo</span>` : "");
+
+  // 1. degradacion
+  table("degradation",
+    ["Horizonte", "Observaciones", "Tasa base", "Brier modelo", "Brier persistencia", "Skill", "Estado"],
+    (d.degradation ?? []).map((g) => [
+      `${g.horizon_minutes} min`,
+      g.n.toLocaleString("es-ES"),
+      pct(g.base_rate, 2),
+      g.model_brier.toFixed(5),
+      g.persistence_brier.toFixed(5),
+      // El skill queda indefinido si la persistencia acierta siempre (Brier 0).
+      Number.isFinite(g.skill_vs_persistence)
+        ? `${(g.skill_vs_persistence * 100).toFixed(1)} %` : "—",
+      g.is_degraded ? '<span class="pill bad">degradado</span>'
+                    : '<span class="pill ok">bate al baseline</span>',
+    ]));
+
+  // 2. drift
+  const drift = d.drift ?? {};
+  if (drift.psi !== undefined) {
+    const level = drift.level === "estable" ? "ok" : drift.level === "moderado" ? "warn" : "bad";
+    $("driftCards").innerHTML =
+      card("PSI de ocupación", drift.psi.toFixed(4),
+           `<span class="pill ${level}">${drift.level}</span> — umbral de aviso 0,10`) +
+      card("Referencia", drift.reference, `${drift.reference_n.toLocaleString("es-ES")} observaciones`) +
+      card("Ventana actual", drift.current_n.toLocaleString("es-ES"), "observaciones del poller");
+    table("driftBins",
+      ["Ocupación", "Referencia", "Actual", "Contribución al PSI"],
+      drift.bins.map((b) => [
+        `${(b.bin_low * 100).toFixed(0)}–${(b.bin_high * 100).toFixed(0)} %`,
+        `${b.reference_pct.toFixed(2)} %`,
+        `${b.current_pct.toFixed(2)} %`,
+        b.contribution.toFixed(5),
+      ]));
+  } else {
+    $("driftCards").innerHTML = card("Drift", "—", drift.error ?? "sin datos");
+  }
+
+  // 3. cobertura
+  const c = d.coverage;
+  $("coverageCards").innerHTML =
+    card("Cobertura", `${c.coverage_pct} %`,
+         `${c.bays_reliable.toLocaleString("es-ES")} de ${c.bays_total.toLocaleString("es-ES")} plazas`,
+         `<div class="bar"><i style="width:${c.coverage_pct}%"></i></div>`) +
+    card("Zonas sin ningún dato", c.zones_without_data, `de ${c.zones_measured} zonas medidas`) +
+    (c.by_quality ?? []).filter((q) => q.quality !== "ok").map((q) =>
+      card(q.quality === "stuck" ? "Sensor congelado" : "Fuera de línea",
+           q.bays.toLocaleString("es-ES"), `${q.share_pct} % del total`)).join("");
+
+  // continuidad
+  const k = d.continuity;
+  $("continuityCards").innerHTML =
+    card("Snapshots", k.snapshots.toLocaleString("es-ES"), `de ${k.expected.toLocaleString("es-ES")} esperados`) +
+    card("Completitud", `${k.completeness_pct} %`, "lotes capturados sobre los posibles") +
+    card("Huecos", k.gap_count, "interrupciones detectadas");
+
+  // historial
+  table("history",
+    ["Versión", "Horizonte", "Brier candidato", "Brier persistencia", "Decisión", "Motivo"],
+    (d.registry_history ?? []).slice().reverse().map((h) => [
+      h.version,
+      h.horizon_minutes ? `${h.horizon_minutes} min` : "—",
+      Number.isFinite(h.candidate_brier) ? h.candidate_brier.toFixed(5) : "—",
+      Number.isFinite(h.persistence_brier) ? h.persistence_brier.toFixed(5) : "—",
+      h.promoted ? '<span class="pill ok">promocionado</span>'
+                 : '<span class="pill warn">rechazado</span>',
+      `<span style="font-size:11.5px">${h.reason_detail ?? h.reason ?? ""}</span>`,
+    ]));
+
+  $("content").hidden = false;
+}
+
+fetch("monitoring", { headers: { Accept: "application/json" } })
+  .then(async (r) => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+    return r.json();
+  })
+  .then(render)
+  .catch((e) => { $("generated").textContent = `No se pudo cargar el informe: ${e.message}`; });
+</script>
+</body>
+</html>

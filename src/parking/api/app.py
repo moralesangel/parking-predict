@@ -7,12 +7,15 @@ directamente. Tres endpoints:
 - `GET /predict`          probabilidad de encontrar sitio al llegar, por zona
 - `GET /zones/coverage`   cobertura por zona, para saber dónde no hay datos
 - `GET /health`           si los datos que sirve están frescos
+- `GET /monitoring`       último informe de operación (degradación, drift, cobertura)
 
 Además monta el frontend estático en `/`.
 """
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import logging
 from typing import Annotated
 
@@ -237,6 +240,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             zones=zones,
             attribution=ATTRIBUTION,
         )
+
+    @app.get("/monitoring", tags=["operación"])
+    def monitoring() -> dict:
+        """Último informe de monitorización, tal como lo dejó `scripts/monitor.py`.
+
+        La API **no lo recalcula**: hacerlo recorrería toda la serie acumulada
+        en una petición HTTP. El informe lo produce el job programado y esto
+        solo lo sirve, así que incluye `generated_at` para que se vea si el job
+        ha dejado de correr.
+        """
+        path = settings.processed_dir / "monitoring" / "report.json"
+        if not path.exists():
+            raise HTTPException(
+                status_code=503,
+                detail=f"no hay informe en {path}; ejecuta scripts/monitor.py",
+            )
+        report = json.loads(path.read_text(encoding="utf-8"))
+        generated = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.UTC)
+        age = (dt.datetime.now(dt.UTC) - generated).total_seconds()
+        return {
+            "generated_at": generated.isoformat(),
+            "age_seconds": round(age, 1),
+            # Un informe de monitorizacion viejo es, en si mismo, un sintoma:
+            # significa que el job programado no esta corriendo.
+            "is_stale": age > 24 * 3600,
+            **report,
+        }
 
     @app.get("/health", response_model=HealthResponse, tags=["operación"])
     def health(repository: RepositoryDep) -> HealthResponse:
