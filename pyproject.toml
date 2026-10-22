@@ -1,7 +1,7 @@
 [project]
 name = "parking-predict"
 version = "0.1.0"
-description = "Ocupación de aparcamiento en tiempo real y predicción de disponibilidad a la llegada (Melbourne)"
+description = "Real-time on-street parking occupancy and arrival-time availability prediction (Melbourne)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,9 +12,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "tenacity>=9.0",
-    # Windows no trae la base de datos IANA de zonas horarias y polars la
-    # necesita para los timestamps con zona. Sin esto, cualquier operacion
-    # sobre un datetime UTC falla con ZoneInfoNotFoundError.
+    # Windows ships no IANA timezone database and polars needs one for
+    # timezone-aware timestamps. Without this, any operation on a UTC datetime
+    # fails with ZoneInfoNotFoundError.
     "tzdata>=2024.1",
 ]
 
@@ -25,10 +25,10 @@ ml = [
     "h3>=4.1",
     "matplotlib>=3.9",
 ]
-# DuckDB va aparte porque su binario esta bloqueado por la politica de
-# Application Control de la maquina de desarrollo (ver docs/data_schema.md y
-# el README). Funciona en el contenedor Linux; polars cubre las consultas
-# mientras tanto, asi que no es una dependencia del nucleo.
+# DuckDB is kept separate because its binary is blocked by the development
+# machine's Application Control policy (see the README). It works inside the
+# Linux container; polars covers the queries meanwhile, so it is not a core
+# dependency.
 sql = [
     "duckdb>=1.1",
 ]

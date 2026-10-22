@@ -1,12 +1,12 @@
-# Levanta la captura de datos y el mapa:
+# Brings up data capture and the map:
 #
 #   docker compose up --build
 #   -> http://localhost:8000
 #
-# La API y el frontend van en el mismo servicio: FastAPI monta `web/` como
-# estáticos. Separarlos obligaría a un nginx con proxy inverso -y su
-# configuración, y CORS- para que el navegador pudiera llamar a la API desde
-# otro origen. Para un único HTML estático no compensa.
+# The API and the frontend live in the same service: FastAPI mounts `web/` as
+# static files. Splitting them would require an nginx reverse proxy - and its
+# configuration, and CORS - so the browser could call the API from another
+# origin. For a single static HTML page that is not worth it.
 services:
   poller:
     build: .
@@ -14,15 +14,15 @@ services:
     command: ["python", "-m", "parking.ingest.poller"]
     restart: unless-stopped
     environment:
-      # El contenedor escribe en /data, que se monta desde ./data del host.
+      # The container writes to /data, mounted from ./data on the host.
       PARKING_DATA_DIR: /data
       PARKING_POLL_INTERVAL_SECONDS: ${PARKING_POLL_INTERVAL_SECONDS:-120}
       PARKING_API_BASE_URL: ${PARKING_API_BASE_URL:-https://data.melbourne.vic.gov.au}
       PARKING_REALTIME_DATASET: ${PARKING_REALTIME_DATASET:-on-street-parking-bay-sensors}
     volumes:
       - ./data:/data
-    # El UID coincide con el usuario `parking` del Dockerfile para que los
-    # ficheros del volumen no queden propiedad de root en el host.
+    # The UID matches the `parking` user in the Dockerfile so the volume's
+    # files do not end up owned by root on the host.
     user: "10001"
     logging:
       driver: json-file
@@ -30,10 +30,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Job periodico: refresca el informe de monitorizacion e intenta reentrenar.
-  # Un bucle de `sleep` en vez de cron: el contenedor es de un solo proceso y
-  # anadir un demonio cron solo para esto complicaria los logs y la senal de
-  # parada. Si el job crece, se saca a un planificador de verdad.
+  # Periodic job: refreshes the monitoring report and attempts a retrain.
+  # A `sleep` loop rather than cron: the container is single-process and adding
+  # a cron daemon just for this would complicate the logs and the shutdown
+  # signal. If the job grows, move it to a real scheduler.
   operations:
     build: .
     image: parking-predict/poller
@@ -42,8 +42,8 @@ services:
     command:
       - |
         while true; do
-          python scripts/monitor.py || echo "monitor fallo";
-          python scripts/retrain.py --horizon 15 || echo "retrain fallo";
+          python scripts/monitor.py || echo "monitor failed";
+          python scripts/retrain.py --horizon 15 || echo "retrain failed";
           sleep "${PARKING_OPERATIONS_INTERVAL_SECONDS:-86400}";
         done
     environment:
@@ -72,18 +72,18 @@ services:
     environment:
       PARKING_DATA_DIR: /data
       PARKING_STUCK_AFTER_HOURS: ${PARKING_STUCK_AFTER_HOURS:-24}
-      # /predict necesita, dentro de ./data: processed/models/ (de
-      # train_evaluate.py) y reference/parking_bays.json (de
-      # fetch_reference.py). Sin ellos el endpoint responde 503 con el
-      # mensaje de que falta; el resto de la API sigue funcionando.
+      # /predict needs, inside ./data: processed/models/ (from
+      # train_evaluate.py) and reference/parking_bays.json (from
+      # fetch_reference.py). Without them the endpoint answers 503 saying what
+      # is missing; the rest of the API keeps working.
     volumes:
-      # Solo lectura: la API nunca escribe datos, solo sirve lo que el poller
-      # dejó. Montarlo `ro` convierte esa intención en una garantía.
+      # Read-only: the API never writes data, it only serves what the poller
+      # left behind. Mounting it `ro` turns that intent into a guarantee.
       - ./data:/data:ro
     user: "10001"
     depends_on:
-      # El poller tarda unos segundos en escribir el primer snapshot. Hasta
-      # entonces la API responde 503 con un mensaje claro, no un error opaco.
+      # The poller takes a few seconds to write the first snapshot. Until
+      # then the API answers 503 with a clear message, not an opaque error.
       - poller
     healthcheck:
       test: ["CMD", "python", "-c",

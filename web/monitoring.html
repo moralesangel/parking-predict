@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Operación — parking-predict</title>
+<title>Operations — parking-predict</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1a1a1a; --muted: #5f6368; --border: #dadce0;
@@ -58,40 +58,41 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Operación</h1>
-  <p class="sub" id="generated">Cargando…</p>
-  <p class="sub"><a href="./">← volver al mapa</a></p>
+  <h1>Operations</h1>
+  <p class="sub" id="generated">Loading…</p>
+  <p class="sub"><a href="./">← back to the map</a></p>
 
   <div id="content" hidden>
-    <h2>1. ¿El modelo sigue batiendo a la persistencia?</h2>
+    <h2>1. Is the model still beating persistence?</h2>
     <p class="note">
-      Medido sobre los datos que el poller ya capturó: la predicción hecha en
-      <em>t</em> se compara con lo que de verdad pasó en <em>t+h</em>. Si el skill
-      cae a cero, el pipeline de ML ha dejado de pagar lo que cuesta.
+      Measured over the data the poller has already captured: the prediction
+      made at <em>t</em> is compared with what actually happened at
+      <em>t+h</em>. If the skill falls to zero, the ML pipeline has stopped
+      paying for itself.
     </p>
     <div class="scroll"><table id="degradation"></table></div>
 
-    <h2>2. Drift de la distribución de ocupación</h2>
+    <h2>2. Occupancy distribution drift</h2>
     <div class="grid" id="driftCards"></div>
     <div class="scroll"><table id="driftBins"></table></div>
 
-    <h2>3. Cobertura de sensores</h2>
+    <h2>3. Sensor coverage</h2>
     <div class="grid" id="coverageCards"></div>
 
-    <h2>Continuidad de la captura</h2>
+    <h2>Capture continuity</h2>
     <div class="grid" id="continuityCards"></div>
 
-    <h2>Historial de reentrenamiento</h2>
+    <h2>Retraining history</h2>
     <p class="note">
-      Se registran también los rechazos. Saber que el modelo lleva semanas sin
-      promocionar porque no bate a la persistencia es información operativa.
+      Rejections are recorded too. Knowing the model has gone weeks without
+      promoting because it cannot beat persistence is operational information.
     </p>
     <div class="scroll"><table id="history"></table></div>
   </div>
 
   <footer>
-    Datos de <a href="https://data.melbourne.vic.gov.au/" target="_blank" rel="noopener">City of
-    Melbourne Open Data</a>, licencia
+    Data from <a href="https://data.melbourne.vic.gov.au/" target="_blank" rel="noopener">City of
+    Melbourne Open Data</a>, licensed
     <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.
   </footer>
 </div>
@@ -116,23 +117,23 @@ function table(target, headers, rows) {
 function render(d) {
   const age = Math.round(d.age_seconds / 60);
   $("generated").innerHTML =
-    `Informe generado hace ${age} min` +
-    (d.is_stale ? ` <span class="pill bad">el job no esta corriendo</span>` : "");
+    `Report generated ${age} min ago` +
+    (d.is_stale ? ` <span class="pill bad">the job is not running</span>` : "");
 
-  // 1. degradacion
+  // 1. degradation
   table("degradation",
-    ["Horizonte", "Observaciones", "Tasa base", "Brier modelo", "Brier persistencia", "Skill", "Estado"],
+    ["Horizon", "Observations", "Base rate", "Model Brier", "Persistence Brier", "Skill", "Status"],
     (d.degradation ?? []).map((g) => [
       `${g.horizon_minutes} min`,
-      g.n.toLocaleString("es-ES"),
+      g.n.toLocaleString("en-AU"),
       pct(g.base_rate, 2),
       g.model_brier.toFixed(5),
       g.persistence_brier.toFixed(5),
-      // El skill queda indefinido si la persistencia acierta siempre (Brier 0).
+      // The skill is undefined when persistence is always right (Brier 0).
       Number.isFinite(g.skill_vs_persistence)
         ? `${(g.skill_vs_persistence * 100).toFixed(1)} %` : "—",
-      g.is_degraded ? '<span class="pill bad">degradado</span>'
-                    : '<span class="pill ok">bate al baseline</span>',
+      g.is_degraded ? '<span class="pill bad">degraded</span>'
+                    : '<span class="pill ok">beats the baseline</span>',
     ]));
 
   // 2. drift
@@ -140,12 +141,12 @@ function render(d) {
   if (drift.psi !== undefined) {
     const level = drift.level === "estable" ? "ok" : drift.level === "moderado" ? "warn" : "bad";
     $("driftCards").innerHTML =
-      card("PSI de ocupación", drift.psi.toFixed(4),
-           `<span class="pill ${level}">${drift.level}</span> — umbral de aviso 0,10`) +
-      card("Referencia", drift.reference, `${drift.reference_n.toLocaleString("es-ES")} observaciones`) +
-      card("Ventana actual", drift.current_n.toLocaleString("es-ES"), "observaciones del poller");
+      card("Occupancy PSI", drift.psi.toFixed(4),
+           `<span class="pill ${level}">${drift.level}</span> — warning threshold 0.10`) +
+      card("Reference", drift.reference, `${drift.reference_n.toLocaleString("en-AU")} observations`) +
+      card("Current window", drift.current_n.toLocaleString("en-AU"), "poller observations");
     table("driftBins",
-      ["Ocupación", "Referencia", "Actual", "Contribución al PSI"],
+      ["Occupancy", "Reference", "Current", "PSI contribution"],
       drift.bins.map((b) => [
         `${(b.bin_low * 100).toFixed(0)}–${(b.bin_high * 100).toFixed(0)} %`,
         `${b.reference_pct.toFixed(2)} %`,
@@ -153,37 +154,37 @@ function render(d) {
         b.contribution.toFixed(5),
       ]));
   } else {
-    $("driftCards").innerHTML = card("Drift", "—", drift.error ?? "sin datos");
+    $("driftCards").innerHTML = card("Drift", "—", drift.error ?? "no data");
   }
 
-  // 3. cobertura
+  // 3. coverage
   const c = d.coverage;
   $("coverageCards").innerHTML =
-    card("Cobertura", `${c.coverage_pct} %`,
-         `${c.bays_reliable.toLocaleString("es-ES")} de ${c.bays_total.toLocaleString("es-ES")} plazas`,
+    card("Coverage", `${c.coverage_pct} %`,
+         `${c.bays_reliable.toLocaleString("en-AU")} of ${c.bays_total.toLocaleString("en-AU")} bays`,
          `<div class="bar"><i style="width:${c.coverage_pct}%"></i></div>`) +
-    card("Zonas sin ningún dato", c.zones_without_data, `de ${c.zones_measured} zonas medidas`) +
+    card("Zones with no data", c.zones_without_data, `of ${c.zones_measured} zones measured`) +
     (c.by_quality ?? []).filter((q) => q.quality !== "ok").map((q) =>
-      card(q.quality === "stuck" ? "Sensor congelado" : "Fuera de línea",
-           q.bays.toLocaleString("es-ES"), `${q.share_pct} % del total`)).join("");
+      card(q.quality === "stuck" ? "Frozen sensor" : "Offline",
+           q.bays.toLocaleString("en-AU"), `${q.share_pct} % of the total`)).join("");
 
-  // continuidad
+  // continuity
   const k = d.continuity;
   $("continuityCards").innerHTML =
-    card("Snapshots", k.snapshots.toLocaleString("es-ES"), `de ${k.expected.toLocaleString("es-ES")} esperados`) +
-    card("Completitud", `${k.completeness_pct} %`, "lotes capturados sobre los posibles") +
-    card("Huecos", k.gap_count, "interrupciones detectadas");
+    card("Snapshots", k.snapshots.toLocaleString("en-AU"), `of ${k.expected.toLocaleString("en-AU")} expected`) +
+    card("Completeness", `${k.completeness_pct} %`, "batches captured out of those possible") +
+    card("Gaps", k.gap_count, "interruptions detected");
 
-  // historial
+  // history
   table("history",
-    ["Versión", "Horizonte", "Brier candidato", "Brier persistencia", "Decisión", "Motivo"],
+    ["Version", "Horizon", "Candidate Brier", "Persistence Brier", "Decision", "Reason"],
     (d.registry_history ?? []).slice().reverse().map((h) => [
       h.version,
       h.horizon_minutes ? `${h.horizon_minutes} min` : "—",
       Number.isFinite(h.candidate_brier) ? h.candidate_brier.toFixed(5) : "—",
       Number.isFinite(h.persistence_brier) ? h.persistence_brier.toFixed(5) : "—",
-      h.promoted ? '<span class="pill ok">promocionado</span>'
-                 : '<span class="pill warn">rechazado</span>',
+      h.promoted ? '<span class="pill ok">promoted</span>'
+                 : '<span class="pill warn">rejected</span>',
       `<span style="font-size:11.5px">${h.reason_detail ?? h.reason ?? ""}</span>`,
     ]));
 
@@ -196,7 +197,7 @@ fetch("monitoring", { headers: { Accept: "application/json" } })
     return r.json();
   })
   .then(render)
-  .catch((e) => { $("generated").textContent = `No se pudo cargar el informe: ${e.message}`; });
+  .catch((e) => { $("generated").textContent = `Could not load the report: ${e.message}`; });
 </script>
 </body>
 </html>

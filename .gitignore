@@ -1,5 +1,5 @@
-# Datos (nunca se versionan). data/* en vez de data/ para poder
-# reincluir el .gitkeep que mantiene el directorio en el repo.
+# Data (never versioned). data/* rather than data/ so the .gitkeep that
+# keeps the directory in the repo can be re-included.
 data/*
 !data/.gitkeep
 
@@ -12,7 +12,7 @@ venv/
 build/
 dist/
 
-# Herramientas
+# Tooling
 .pytest_cache/
 .ruff_cache/
 .coverage
@@ -20,18 +20,18 @@ coverage.xml
 htmlcov/
 .ipynb_checkpoints/
 
-# Entorno
+# Environment
 .env
 
-# Modelos entrenados y artefactos. Ancladas a la raiz: sin la barra
-# inicial, 'models/' tapaba tambien src/parking/models/.
+# Trained models and artefacts. Anchored to the root: without the leading
+# slash, 'models/' also shadowed src/parking/models/.
 /models/
 /artifacts/
 *.pkl
 *.joblib
 *.txt.model
 
-# Editores / SO
+# Editors / OS
 .vscode/
 .idea/
 .DS_Store

@@ -1,5 +1,5 @@
-# web/ SI entra en la imagen: la API lo sirve como estaticos.
-# Los datos se montan como volumen, nunca van en la imagen (son GB).
+# web/ DOES go into the image: the API serves it as static files.
+# Data is mounted as a volume, never baked into the image (it is GBs).
 data/
 .venv/
 .git/
@@ -11,5 +11,5 @@ __pycache__/
 notebooks/
 docs/
 tests/
-# scripts/ SI entra: el servicio `operations` ejecuta monitor.py y retrain.py.
+# scripts/ DOES go in: the `operations` service runs monitor.py and retrain.py.
 .env

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aparcamiento en Melbourne — estado y predicción</title>
+<title>Melbourne parking — live state and prediction</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
@@ -88,8 +88,8 @@
   .zone .p { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 14px;
              min-width: 42px; text-align: right; }
   .zone .meta { flex: 1; min-width: 0; }
-  /* display:block es necesario: overflow/text-overflow no hacen nada sobre un
-     elemento inline, y el nombre del tramo se salia del panel. */
+  /* display:block is required: overflow/text-overflow do nothing on an inline
+     element, and the segment name used to spill out of the panel. */
   .zone .name { display: block; font-size: 12px; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
   .zone .sub2 { display: block; font-size: 11px; color: var(--muted); }
@@ -108,63 +108,63 @@
 <body>
 
 <header>
-  <h1>Aparcamiento en calle en Melbourne</h1>
-  <div class="sub" id="subtitle">Cargando…</div>
+  <h1>On-street parking in Melbourne</h1>
+  <div class="sub" id="subtitle">Loading…</div>
 </header>
 
 <div id="map"></div>
 
 <aside class="panel" id="panel" hidden>
   <div class="tabs" role="tablist">
-    <button id="tabLive" role="tab" aria-selected="true">Estado ahora</button>
-    <button id="tabPredict" role="tab" aria-selected="false">¿Habrá sitio?</button>
+    <button id="tabLive" role="tab" aria-selected="true">State now</button>
+    <button id="tabPredict" role="tab" aria-selected="false">Will there be space?</button>
   </div>
 
   <div class="warn" id="staleWarning" hidden></div>
 
-  <!-- ---------- modo estado actual ---------- -->
+  <!-- ---------- live state mode ---------- -->
   <section id="liveView">
-    <h2>Plazas libres ahora</h2>
+    <h2>Free bays right now</h2>
     <p class="big"><span id="freeCount">—</span><small id="freeOf"></small></p>
 
     <hr>
-    <h2>Estado</h2>
-    <div class="row"><span><i class="swatch" style="background:var(--free)"></i>Libre</span>
+    <h2>State</h2>
+    <div class="row"><span><i class="swatch" style="background:var(--free)"></i>Free</span>
                      <span class="n" id="nFree">—</span></div>
-    <div class="row"><span><i class="swatch" style="background:var(--occupied)"></i>Ocupada</span>
+    <div class="row"><span><i class="swatch" style="background:var(--occupied)"></i>Occupied</span>
                      <span class="n" id="nOccupied">—</span></div>
-    <div class="row"><span><i class="swatch" style="background:var(--unknown)"></i>Sin dato fiable</span>
+    <div class="row"><span><i class="swatch" style="background:var(--unknown)"></i>No reliable data</span>
                      <span class="n" id="nUnknown">—</span></div>
 
     <hr>
-    <h2>Cobertura de sensores</h2>
-    <div class="row"><span>Plazas en el feed</span><span class="n" id="nTotal">—</span></div>
-    <div class="row"><span>Con lectura fiable</span><span class="n" id="nReliable">—</span></div>
-    <div class="row"><span>Sensor congelado</span><span class="n" id="nStuck">—</span></div>
-    <div class="row"><span>Fuera de línea</span><span class="n" id="nOffline">—</span></div>
+    <h2>Sensor coverage</h2>
+    <div class="row"><span>Bays in the feed</span><span class="n" id="nTotal">—</span></div>
+    <div class="row"><span>With a reliable reading</span><span class="n" id="nReliable">—</span></div>
+    <div class="row"><span>Frozen sensor</span><span class="n" id="nStuck">—</span></div>
+    <div class="row"><span>Offline</span><span class="n" id="nOffline">—</span></div>
     <p class="note" id="coverageNote"></p>
 
     <hr>
     <label class="toggle">
       <input type="checkbox" id="showUnknown" checked>
-      Mostrar plazas sin dato
+      Show bays without data
     </label>
     <p class="note">
-      Una plaza sin dato fiable no es una plaza libre: su sensor no reporta o
-      lleva mucho sin cambiar de estado.
+      A bay without a reliable reading is not a free bay: its sensor is either
+      not reporting or has not changed state in a long time.
     </p>
   </section>
 
-  <!-- ---------- modo prediccion ---------- -->
+  <!-- ---------- prediction mode ---------- -->
   <section id="predictView" hidden>
     <div class="warn" id="modelCaveat"></div>
 
-    <h2>Destino</h2>
-    <p class="note" id="destinationHint">Toca el mapa para elegir a dónde vas.</p>
+    <h2>Destination</h2>
+    <p class="note" id="destinationHint">Tap the map to choose where you are going.</p>
 
     <div id="etaBlock" hidden>
       <hr>
-      <h2>Llego en</h2>
+      <h2>Arriving in</h2>
       <div class="eta">
         <strong id="etaValue">15 min</strong>
         <span class="note" id="horizonNote"></span>
@@ -172,24 +172,24 @@
       <input type="range" id="etaSlider" min="5" max="30" step="5" value="15">
 
       <hr>
-      <h2>Probabilidad de encontrar sitio</h2>
+      <h2>Probability of finding a space</h2>
       <div class="ramp" id="ramp"></div>
       <div class="ramp-labels"><span>0 %</span><span>50 %</span><span>100 %</span></div>
       <div id="zoneList"></div>
       <p class="note">
-        Se muestran varias zonas y no solo la mejor, ordenadas por distancia.
-        Señalar un único hueco mandaría a todo el mundo al mismo sitio.
+        Several zones are shown rather than only the best one, ordered by
+        distance. Pointing at a single spot would send everyone to the same place.
       </p>
     </div>
   </section>
 </aside>
 
 <footer>
-  Datos de <a href="https://data.melbourne.vic.gov.au/" target="_blank" rel="noopener">City of
-  Melbourne Open Data</a>, licencia <a href="https://creativecommons.org/licenses/by/4.0/"
-  target="_blank" rel="noopener">CC BY 4.0</a>. Mapa base ©
+  Data from <a href="https://data.melbourne.vic.gov.au/" target="_blank" rel="noopener">City of
+  Melbourne Open Data</a>, licensed <a href="https://creativecommons.org/licenses/by/4.0/"
+  target="_blank" rel="noopener">CC BY 4.0</a>. Base map ©
   <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.
-  Este proyecto no está afiliado a City of Melbourne.
+  This project is not affiliated with City of Melbourne.
 </footer>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -197,22 +197,22 @@
 <script>
 "use strict";
 
-// Cadencia del feed de origen: un lote nuevo cada 2 min (medido).
+// Source feed cadence: a new batch every 2 min (measured).
 const REFRESH_MS = 120000;
 const SEARCH_RADIUS_M = 600;
 
 const COLORS = { free: "#1a9850", occupied: "#d73027", unknown: "#9aa0a6" };
 const LABELS = {
-  free: "Libre", occupied: "Ocupada", unknown: "Sin dato fiable",
-  ok: "sensor reportando con normalidad",
-  stuck: "el sensor reporta pero lleva mucho sin cambiar de estado",
-  offline: "el sensor no aparece en el ultimo lote del feed",
+  free: "Free", occupied: "Occupied", unknown: "No reliable data",
+  ok: "sensor reporting normally",
+  stuck: "the sensor reports but has not changed state in a long time",
+  offline: "the sensor is absent from the feed's latest batch",
 };
 
-// Rampa SECUENCIAL de un solo tono para la probabilidad. Deliberadamente no es
-// rojo-verde: eso leeria como "bueno/malo" y lo confunde buena parte de las
-// personas con daltonismo. La probabilidad es una magnitud, asi que va de claro
-// a oscuro, y ademas se imprime siempre el numero.
+// SEQUENTIAL single-hue ramp for the probability. Deliberately not red-green:
+// that would read as "good/bad" and a sizeable share of colour-blind readers
+// cannot tell them apart. Probability is a magnitude, so it runs light to dark,
+// and the number is always printed alongside.
 const PROB_RAMP = ["#dbe9f8", "#aecdef", "#7fb0e4", "#5192d8", "#2a78d6", "#1b5aa6"];
 const probColor = (p) => PROB_RAMP[Math.min(PROB_RAMP.length - 1, Math.floor(p * PROB_RAMP.length))];
 
@@ -233,18 +233,17 @@ let destinationMarker = null;
 let destinationCircle = null;
 
 const $ = (id) => document.getElementById(id);
-const fmt = (n) => n.toLocaleString("es-ES");
+const fmt = (n) => n.toLocaleString("en-AU");
 
 let mode = "live";
 let destination = null;
-let lastLive = null;
 
-/* ---------------- estado actual ---------------- */
+/* ---------------- live state ---------------- */
 
 function formatAge(hours) {
-  if (hours < 1) return `hace ${Math.round(hours * 60)} min`;
-  if (hours < 48) return `hace ${hours.toFixed(1)} h`;
-  return `hace ${Math.round(hours / 24)} dias`;
+  if (hours < 1) return `${Math.round(hours * 60)} min ago`;
+  if (hours < 48) return `${hours.toFixed(1)} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
 }
 
 function drawBays(bays) {
@@ -258,22 +257,21 @@ function drawBays(bays) {
       fillOpacity: bay.state === "unknown" ? 0.45 : 0.85,
     })
       .bindPopup(() => `<strong>${LABELS[bay.state]}</strong>
-        <dl><dt>Plaza</dt><dd>${bay.kerbsideid}</dd>
-        <dt>Zona</dt><dd>${bay.zone_number ?? "sin zona"}</dd>
-        <dt>Ultimo cambio</dt><dd>${formatAge(bay.status_age_hours)}</dd>
+        <dl><dt>Bay</dt><dd>${bay.kerbsideid}</dd>
+        <dt>Zone</dt><dd>${bay.zone_number ?? "no zone"}</dd>
+        <dt>Last change</dt><dd>${formatAge(bay.status_age_hours)}</dd>
         <dt>Sensor</dt><dd>${LABELS[bay.quality]}</dd></dl>`)
       .addTo(layers[bay.state]);
   }
 }
 
 function renderLive(data) {
-  lastLive = data;
   const s = data.summary;
   const counts = { free: 0, occupied: 0, unknown: 0 };
   for (const bay of data.bays) counts[bay.state]++;
 
   $("freeCount").textContent = fmt(counts.free);
-  $("freeOf").textContent = ` de ${fmt(s.reliable_bays)} medidas`;
+  $("freeOf").textContent = ` of ${fmt(s.reliable_bays)} measured`;
   $("nFree").textContent = fmt(counts.free);
   $("nOccupied").textContent = fmt(counts.occupied);
   $("nUnknown").textContent = fmt(counts.unknown);
@@ -282,21 +280,21 @@ function renderLive(data) {
   $("nStuck").textContent = fmt(s.by_quality.stuck);
   $("nOffline").textContent = fmt(s.by_quality.offline);
   $("coverageNote").textContent =
-    `La ocupacion (${s.occupancy_pct ?? "?"}%) se calcula solo sobre las ` +
-    `${fmt(s.reliable_bays)} plazas con lectura fiable.`;
+    `Occupancy (${s.occupancy_pct ?? "?"}%) is computed over the ` +
+    `${fmt(s.reliable_bays)} bays with a reliable reading only.`;
 
   const age = Math.round(data.snapshot.age_seconds);
   const stamp = new Date(data.snapshot.feed_lastupdated);
   $("subtitle").textContent =
-    `Lote del feed: ${stamp.toLocaleString("es-ES")} — hace ${age} s. ` +
-    `${fmt(s.reliable_bays)} de ${fmt(s.total_bays)} plazas con sensor fiable.`;
+    `Feed batch: ${stamp.toLocaleString("en-AU")} — ${age} s ago. ` +
+    `${fmt(s.reliable_bays)} of ${fmt(s.total_bays)} bays with a reliable sensor.`;
 
   const warning = $("staleWarning");
   warning.hidden = !data.snapshot.is_stale;
   if (data.snapshot.is_stale) {
     warning.textContent =
-      `Los datos tienen ${Math.round(age / 60)} min. El poller puede estar caido: ` +
-      `lo que se muestra es el ultimo estado conocido, no el actual.`;
+      `This data is ${Math.round(age / 60)} min old. The poller may be down: ` +
+      `what you see is the last known state, not the current one.`;
   }
 
   drawBays(data.bays);
@@ -309,11 +307,11 @@ async function loadLive() {
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
     renderLive(await response.json());
   } catch (error) {
-    $("subtitle").textContent = `No se pudieron cargar los datos: ${error.message}`;
+    $("subtitle").textContent = `Could not load the data: ${error.message}`;
   }
 }
 
-/* ---------------- prediccion ---------------- */
+/* ---------------- prediction ---------------- */
 
 function drawZones(zones) {
   predictLayer.clearLayers();
@@ -326,21 +324,21 @@ function drawZones(zones) {
     })
       .bindTooltip(`${pct} %`, { permanent: true, direction: "center", className: "zone-label" })
       .bindPopup(`<strong>${zone.label}</strong>
-        <dl><dt>Probabilidad</dt><dd>${pct} %</dd>
-        <dt>Libres ahora</dt><dd>${zone.free_bays} de ${zone.total_bays}</dd>
-        <dt>Distancia</dt><dd>${Math.round(zone.distance_m)} m</dd></dl>`)
+        <dl><dt>Probability</dt><dd>${pct} %</dd>
+        <dt>Free now</dt><dd>${zone.free_bays} of ${zone.total_bays}</dd>
+        <dt>Distance</dt><dd>${Math.round(zone.distance_m)} m</dd></dl>`)
       .addTo(predictLayer);
   }
 }
 
 function renderZones(data) {
   $("modelCaveat").textContent = data.model_caveat;
-  $("horizonNote").textContent = `modelo de ${data.horizon_minutes} min`;
+  $("horizonNote").textContent = `${data.horizon_minutes} min model`;
 
   const list = $("zoneList");
   list.textContent = "";
   if (!data.zones.length) {
-    list.innerHTML = `<p class="note">No hay zonas con datos a menos de ${SEARCH_RADIUS_M} m.</p>`;
+    list.innerHTML = `<p class="note">No zones with data within ${SEARCH_RADIUS_M} m.</p>`;
   }
   for (const zone of data.zones) {
     const pct = Math.round(zone.probability * 100);
@@ -349,7 +347,7 @@ function renderZones(data) {
     row.innerHTML =
       `<span class="swatch" style="background:${probColor(zone.probability)};width:12px;height:12px"></span>
        <span class="meta"><span class="name">${zone.label}</span>
-       <span class="sub2">${zone.free_bays}/${zone.total_bays} libres · ${Math.round(zone.distance_m)} m</span></span>
+       <span class="sub2">${zone.free_bays}/${zone.total_bays} free · ${Math.round(zone.distance_m)} m</span></span>
        <span class="p">${pct} %</span>`;
     list.appendChild(row);
   }
@@ -366,7 +364,7 @@ async function loadPrediction() {
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
     renderZones(await response.json());
   } catch (error) {
-    $("zoneList").innerHTML = `<p class="note">No se pudo predecir: ${error.message}</p>`;
+    $("zoneList").innerHTML = `<p class="note">Could not predict: ${error.message}</p>`;
   }
 }
 
@@ -379,12 +377,12 @@ function setDestination(latlng) {
     radius: SEARCH_RADIUS_M, color: "#2a78d6", weight: 1,
     fillColor: "#2a78d6", fillOpacity: 0.05,
   }).addTo(map);
-  $("destinationHint").textContent = "Toca otro punto para cambiar el destino.";
+  $("destinationHint").textContent = "Tap another point to change the destination.";
   $("etaBlock").hidden = false;
   loadPrediction();
 }
 
-/* ---------------- modos ---------------- */
+/* ---------------- modes ---------------- */
 
 function setMode(next) {
   mode = next;
@@ -423,8 +421,8 @@ map.on("click", (event) => {
   setDestination(event.latlng);
 });
 
-// Destino por URL: ?lat=&lon=&eta=. Hace el enlace compartible, y permite
-// comprobar el modo prediccion sin depender de un clic.
+// Destination via URL: ?lat=&lon=&eta=. Makes the link shareable, and allows
+// checking the prediction mode without depending on a click.
 function applyUrlDestination() {
   const params = new URLSearchParams(location.search);
   const lat = parseFloat(params.get("lat"));
