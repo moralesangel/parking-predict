@@ -1,0 +1,3 @@
+# Normaliza finales de línea: LF en el repo, nativo en el working copy.
+* text=auto eol=lf
+*.parquet binary
