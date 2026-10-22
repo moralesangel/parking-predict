@@ -1,60 +1,62 @@
-"""Clasificación de fiabilidad de cada lectura de sensor.
+"""Reliability classification for each sensor reading.
 
-El feed falla de dos maneras distintas, y confundirlas sesga cualquier métrica
-de ocupación:
+The feed fails in two distinct ways, and conflating them biases every
+occupancy metric:
 
-1. **Sensor fuera de línea.** No aparece en el lote actual del feed. Se detecta
-   de forma exacta: `lastupdated < max(lastupdated)` del snapshot. Son relés de
-   red caídos, y caen en bloque (ver `docs/data_schema.md` §1.2).
+1. **Offline sensor.** It is absent from the feed's current batch. Detected
+   exactly: `lastupdated < max(lastupdated)` within the snapshot. These are
+   dead network relays, and they fail in blocks (see `docs/data_schema.md`
+   §1.2).
 
-2. **Sensor atascado.** Sí aparece en el lote —el relé lo reporta— pero su
-   estado no cambia desde hace mucho. El sensor de suelo está congelado. Es el
-   fallo más numeroso y el que no se ve si solo se mira `lastupdated`: 1707 de
-   5264 plazas en línea, con una mediana de 150 días sin cambiar.
+2. **Stuck sensor.** It *is* in the batch — the relay reports it — but its
+   state has not changed in a very long time. The in-ground sensor is frozen.
+   This is the more numerous failure and the one you cannot see by watching
+   `lastupdated` alone: 1707 bays out of 5264 online, with a median of 150
+   days without a state change.
 
-Regla del plan que este módulo respeta de forma estructural: **nunca se borra
-nada en silencio**. Todas las funciones *añaden* columnas; ninguna filtra filas.
-Quien consuma los datos decide qué hacer con las lecturas no fiables, y la
-cobertura se puede medir precisamente porque las filas malas siguen ahí.
+Plan rule this module enforces structurally: **nothing is ever dropped
+silently.** Every function *adds* columns; none filters rows. Consumers decide
+what to do with unreliable readings, and coverage stays measurable precisely
+because the bad rows are still there.
 """
 
 from __future__ import annotations
 
 import polars as pl
 
-#: Estados de fiabilidad de una lectura. `pl.Enum` en lugar de texto libre para
-#: dejar el conjunto cerrado: castear un valor que no esté aquí lanza
-#: `InvalidOperationError`, así que no se puede escribir un estado inventado.
-#: No protege del typo al *leer* (`col("quality") == "okay"` devuelve 0 filas en
-#: silencio); para eso están estas constantes.
+#: Reliability states of a reading. `pl.Enum` rather than free text so the set
+#: stays closed: casting a value that is not listed here raises
+#: `InvalidOperationError`, so an invented state cannot be written.
+#: It does *not* protect against a typo when *reading*
+#: (`col("quality") == "okay"` silently returns 0 rows); these constants do.
 QUALITY_VALUES = ("ok", "stuck", "offline")
 QUALITY_DTYPE = pl.Enum(QUALITY_VALUES)
 
-#: Columnas que añade `annotate_quality`.
+#: Columns added by `annotate_quality`.
 QUALITY_COLUMNS = ("status_age_hours", "quality", "is_reliable")
 
 
 def annotate_quality(frame: pl.DataFrame, *, stuck_after_hours: float = 24.0) -> pl.DataFrame:
-    """Añade el diagnóstico de calidad a un snapshot.
+    """Add the quality diagnosis to a snapshot.
 
-    Columnas añadidas:
+    Columns added:
 
-    - `status_age_hours`: horas desde el último cambio de estado, medidas contra
-      el sello del lote (`feed_lastupdated`) y no contra la hora actual, para
-      que el resultado sea reproducible al reprocesar datos antiguos.
-    - `quality`: `offline`, `stuck` u `ok`. El orden importa: una plaza fuera de
-      línea se marca como tal aunque además lleve mucho sin cambiar, porque la
-      causa raíz es el relé.
-    - `is_reliable`: `True` solo para `ok`. Es la columna que deben usar las
-      features y las métricas.
+    - `status_age_hours`: hours since the last state change, measured against
+      the batch stamp (`feed_lastupdated`) rather than the current time, so
+      reprocessing old data stays reproducible.
+    - `quality`: `offline`, `stuck` or `ok`. Order matters: a bay that is out
+      of the batch is marked offline even when it has also been unchanged for
+      ages, because the root cause is the relay.
+    - `is_reliable`: `True` only for `ok`. This is the column features and
+      metrics must use.
 
-    No filtra ninguna fila (regla del plan: nunca borrar en silencio).
+    Drops no rows (plan rule: never delete silently).
     """
     missing = {"lastupdated", "feed_lastupdated", "status_timestamp", "is_live"} - set(
         frame.columns
     )
     if missing:
-        raise ValueError(f"al snapshot le faltan columnas: {sorted(missing)}")
+        raise ValueError(f"snapshot is missing columns: {sorted(missing)}")
 
     age_hours = (
         pl.col("feed_lastupdated") - pl.col("status_timestamp")
@@ -75,9 +77,9 @@ def annotate_quality(frame: pl.DataFrame, *, stuck_after_hours: float = 24.0) ->
 
 
 def quality_summary(frame: pl.DataFrame) -> pl.DataFrame:
-    """Recuento y porcentaje por estado de calidad, para informes y logs."""
+    """Counts and shares per quality state, for reports and logs."""
     if "quality" not in frame.columns:
-        raise ValueError("llama antes a annotate_quality")
+        raise ValueError("call annotate_quality first")
 
     total = frame.height
     return (
@@ -92,18 +94,17 @@ def quality_summary(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def occupancy(frame: pl.DataFrame, *, reliable_only: bool = True) -> float | None:
-    """Ocupación media, por defecto solo sobre lecturas fiables.
+    """Mean occupancy, by default over reliable readings only.
 
-    `reliable_only=False` existe para poder medir el sesgo de no filtrar, que no
-    es constante: las lecturas atascadas tienen una ocupación *congelada*
-    (39,3 % en el feed real) que no sigue el ciclo diario, así que el sesgo es
-    proporcional a cuánto se aleja la ocupación real de ese valor. Medido sobre
-    snapshots individuales: +7,6 puntos a las 10:04 UTC y -0,1 a las 11:46. Es
-    decir, el sesgo es peor en hora punta, justo cuando la predicción importa.
+    `reliable_only=False` exists so the bias of not filtering can be measured,
+    and that bias is not constant: stuck readings carry a *frozen* occupancy
+    (39.3% in the real feed) that does not follow the daily cycle, so the bias
+    is proportional to how far true occupancy sits from that value. Measured on
+    individual snapshots: +7.6 points at 10:04 UTC and -0.1 at 11:46. In other
+    words the bias is worst at peak hours, exactly when prediction matters.
 
-    Devuelve `None` si no queda ninguna lectura utilizable, en lugar de 0.0: un
-    cero significaría "todo libre", que es exactamente lo contrario de "no se
-    sabe".
+    Returns `None` when no usable reading is left, rather than 0.0: a zero
+    would mean "everything free", which is the opposite of "unknown".
     """
     subset = frame.filter(pl.col("is_reliable")) if reliable_only else frame
     if subset.height == 0:

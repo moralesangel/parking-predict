@@ -1,14 +1,15 @@
-"""Métricas de cobertura de sensores por zona y por hora.
+"""Sensor coverage metrics by zone and by hour.
 
-La cobertura es la fracción de plazas con lectura fiable. Importa por dos
-razones distintas:
+Coverage is the share of bays with a reliable reading. It matters for two
+different reasons:
 
-- **Por zona**, decide dónde se puede predecir. Una zona con 3 de 20 plazas
-  fiables no permite estimar "¿hay sitio?" con ninguna confianza, y el producto
-  debería decir "no hay datos" en lugar de inventar una probabilidad.
-- **Por hora**, detecta patrones de degradación horaria. Si la cobertura cae
-  todas las noches, cualquier métrica nocturna está medida sobre otro parque de
-  sensores que la diurna, y comparar horas sin corregirlo es un error.
+- **By zone**, it decides where prediction is possible at all. A zone with 3
+  reliable bays out of 20 cannot support any confident "is there space?"
+  answer, and the product should say "no data" instead of inventing a
+  probability.
+- **By hour**, it detects hourly degradation patterns. If coverage drops every
+  night, any night-time metric is measured over a different sensor fleet than
+  the daytime one, and comparing hours without correcting for that is wrong.
 """
 
 from __future__ import annotations
@@ -17,18 +18,18 @@ import polars as pl
 
 
 def coverage_by_zone(frame: pl.DataFrame, *, min_bays: int = 1) -> pl.DataFrame:
-    """Cobertura por `zone_number`.
+    """Coverage per `zone_number`.
 
-    Las plazas sin zona (520 de 6324 en el feed real) se agrupan bajo zona nula
-    en lugar de descartarse: son plazas reales y su falta de zona es en sí un
-    problema de calidad que conviene ver.
+    Bays without a zone (520 out of 6324 in the real feed) are grouped under a
+    null zone rather than dropped: they are real bays, and their missing zone
+    is itself a quality problem worth seeing.
 
-    `min_bays` filtra zonas demasiado pequeñas para que el porcentaje signifique
-    algo. Filtra el *informe*, no los datos.
+    `min_bays` filters out zones too small for the percentage to mean anything.
+    It filters the *report*, not the data.
 
-    Acepta tanto un snapshot como una serie de varios. `bays` cuenta plazas
-    distintas y `readings` cuenta lecturas, que con N snapshots son N veces más:
-    confundirlos inflaría el tamaño aparente de cada zona.
+    Accepts a single snapshot or a series of many. `bays` counts distinct bays
+    and `readings` counts rows, which with N snapshots are N times as many:
+    conflating them would inflate each zone's apparent size.
     """
     _require_quality(frame)
     return (
@@ -47,11 +48,11 @@ def coverage_by_zone(frame: pl.DataFrame, *, min_bays: int = 1) -> pl.DataFrame:
 
 
 def coverage_by_hour(frame: pl.DataFrame) -> pl.DataFrame:
-    """Cobertura por hora UTC del sello del lote.
+    """Coverage per UTC hour of the batch stamp.
 
-    Espera un frame con varios snapshots concatenados (la serie que acumula el
-    poller). Con un solo snapshot devuelve una fila, que no dice nada sobre
-    patrones horarios: hace falta al menos un día completo para eso.
+    Expects a frame with several snapshots concatenated (the series the poller
+    accumulates). With a single snapshot it returns one row, which says nothing
+    about hourly patterns: at least a full day is needed for that.
     """
     _require_quality(frame)
     return (
@@ -68,17 +69,18 @@ def coverage_by_hour(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def flapping_sensors(frame: pl.DataFrame, *, min_snapshots: int = 3) -> pl.DataFrame:
-    """Plazas que alternan entre fiable y no fiable a lo largo de la serie.
+    """Bays that alternate between reliable and unreliable along the series.
 
-    Un sensor que entra y sale del lote es peor que uno caído del todo: el caído
-    se excluye y se acabó, pero el intermitente mete y saca plazas del
-    denominador de cada zona, y eso mueve la ocupación agregada sin que haya
-    cambiado ningún coche. Son los candidatos a excluir de las features.
+    A sensor that drops in and out of the batch is worse than one that is down
+    for good: the dead one is excluded and that is that, while the flapping one
+    pushes bays in and out of each zone's denominator, moving aggregate
+    occupancy without a single car having moved. These are the candidates to
+    exclude from features.
     """
     _require_quality(frame)
     return (
-        # El orden temporal es imprescindible: `transitions` compara cada lectura
-        # con la anterior, y sobre filas desordenadas contaria cambios ficticios.
+        # Temporal order is essential: `transitions` compares each reading with
+        # the previous one, and over unsorted rows it would count phantom flips.
         frame.sort("feed_lastupdated")
         .group_by("kerbsideid")
         .agg(
@@ -96,4 +98,4 @@ def flapping_sensors(frame: pl.DataFrame, *, min_snapshots: int = 3) -> pl.DataF
 
 def _require_quality(frame: pl.DataFrame) -> None:
     if "is_reliable" not in frame.columns:
-        raise ValueError("llama antes a parking.quality.flags.annotate_quality")
+        raise ValueError("call parking.quality.flags.annotate_quality first")

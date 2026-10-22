@@ -1,18 +1,18 @@
-"""Features de tramo a partir de los snapshots del poller.
+"""Segment-level features built from the poller's snapshots.
 
-El modelo se entrenó sobre el histórico de 2019, cuyo esquema es de intervalos.
-El tiempo real es otra cosa: una foto del estado cada 2 minutos. Este módulo
-produce, a partir de esas fotos, **exactamente las mismas columnas** que
-`parking.features.dataset`, para que el modelo entrenado pueda puntuarlas.
+The model was trained on the 2019 archive, whose schema is intervals. The
+real-time feed is something else: a snapshot of the state every 2 minutes. This
+module turns those snapshots into **exactly the same columns** as
+`parking.features.dataset`, so the trained model can score them.
 
-Que eso sea posible depende de un detalle de la Fase 4: `segment_id` **no es
-una feature**. El modelo solo mira ocupación, historia reciente, vecinos y
-calendario, así que puntúa igual un tramo que no existía en 2019. De los 278
-tramos vivos solo 130 aparecen en el dataset de entrenamiento, y aun así los
-278 son puntuables.
+That this is possible at all rests on a phase 4 detail: `segment_id` **is not a
+feature**. The model only looks at occupancy, recent history, neighbours and
+calendar, so it scores a segment that did not exist in 2019 just as well. Of
+the 278 live segments only 130 appear in the training dataset, and all 278 are
+still scorable.
 
-El puente entre ambos mundos es `kerbsideid → segment_id`, vía el dataset de
-geometría (`docs/id_crosswalk.md`): cubre el 84,9 % de las plazas vivas.
+The bridge between the two worlds is `kerbsideid -> segment_id`, via the
+geometry dataset (`docs/id_crosswalk.md`): it covers 84.9% of live bays.
 """
 
 from __future__ import annotations
@@ -36,18 +36,18 @@ from parking.ingest.crosswalk import segment_key_from_description
 
 logger = logging.getLogger(__name__)
 
-#: Paso de la rejilla en vivo. El feed publica cada 2 min, pero el modelo se
-#: entrenó con retardos expresados sobre una rejilla de 5, así que la serie se
-#: remuestrea a 5 para que `free_bays_lag5` signifique lo mismo en ambos lados.
+#: Live grid step. The feed publishes every 2 min, but the model was trained
+#: with lags expressed over a 5-minute grid, so the series is resampled to 5 so
+#: that `free_bays_lag5` means the same thing on both sides.
 LIVE_GRID_MINUTES = 5
 
 
 def load_bay_segments(path: Path) -> dict[int, str]:
-    """Mapa `kerbsideid → segment_id` desde el export de geometría.
+    """Map `kerbsideid -> segment_id` from the geometry export.
 
-    Se descarta cualquier plaza cuya descripción de tramo no encaje en el
-    patrón `X between A and B`: sin tramo no hay dónde agregarla, y meterla en
-    uno aproximado contaminaría el recuento de ese tramo.
+    Any bay whose segment description does not match the `X between A and B`
+    pattern is dropped: with no segment there is nowhere to aggregate it, and
+    putting it in an approximate one would contaminate that segment's counts.
     """
     rows = json.loads(path.read_text(encoding="utf-8"))
     mapping: dict[int, str] = {}
@@ -62,7 +62,7 @@ def load_bay_segments(path: Path) -> dict[int, str]:
 
 
 def load_bay_coordinates(path: Path) -> pl.DataFrame:
-    """Centroide de cada tramo, para poder buscar por latitud y longitud."""
+    """Centroid of each segment, so it can be looked up by latitude/longitude."""
     rows = json.loads(path.read_text(encoding="utf-8"))
     records = []
     for row in rows:
@@ -92,15 +92,15 @@ def load_bay_coordinates(path: Path) -> pl.DataFrame:
 
 
 def segment_occupancy(series: pl.DataFrame, bay_segments: dict[int, str]) -> pl.DataFrame:
-    """Agrega los snapshots por tramo e instante.
+    """Aggregate the snapshots by segment and instant.
 
-    Solo cuentan las lecturas **fiables**. Es la regla de la Fase 2 aplicada
-    aquí: una plaza con el sensor congelado no es una plaza libre, y sumarla al
-    denominador inflaría la oferta aparente del tramo.
+    Only **reliable** readings count. That is the phase 2 rule applied here: a
+    bay with a frozen sensor is not a free bay, and adding it to the
+    denominator would inflate the segment's apparent supply.
 
-    La rejilla se lleva a 5 minutos para que coincida con la del entrenamiento.
-    Si en una ventana de 5 min caen dos lotes del feed, se toma el último: es el
-    estado al final del intervalo, que es lo que el histórico representaba.
+    The grid is bucketed to 5 minutes to match training. If two feed batches
+    land in the same 5-minute window, the last one wins: it is the state at the
+    end of the interval, which is what the archive represented.
     """
     if series.is_empty():
         return pl.DataFrame()
@@ -116,7 +116,7 @@ def segment_occupancy(series: pl.DataFrame, bay_segments: dict[int, str]) -> pl.
     if bucketed.is_empty():
         return pl.DataFrame()
 
-    # Último lote dentro de cada ventana de 5 min, por plaza.
+    # Last batch within each 5-minute window, per bay.
     latest = (
         bucketed.sort("feed_lastupdated")
         .group_by("segment_id", "timestamp", "kerbsideid")
@@ -134,16 +134,15 @@ def segment_occupancy(series: pl.DataFrame, bay_segments: dict[int, str]) -> pl.
 
 
 def densify(occupancy: pl.DataFrame) -> pl.DataFrame:
-    """Rellena los instantes que falten, para que los retardos no mientan.
+    """Fill in missing instants so the lags do not lie.
 
-    `add_lag_features` traduce minutos a número de filas, lo que **asume una
-    rejilla sin huecos**. Si el poller perdió lotes, `shift(1)` saltaría a un
-    instante arbitrario y `free_bays_lag5` contendría un valor de hace media
-    hora sin que nada lo indique.
+    `add_lag_features` translates minutes into a row count, which **assumes a
+    gap-free grid**. If the poller missed batches, `shift(1)` would jump to an
+    arbitrary instant and `free_bays_lag5` would hold a value from half an hour
+    ago with nothing signalling it.
 
-    Los huecos se rellenan hacia delante (el último estado conocido) y se marcan
-    con `is_interpolated`, para que el consumidor sepa que esa fila no se
-    observó.
+    Gaps are forward-filled (the last known state) and flagged with
+    `is_interpolated`, so consumers know that row was not observed.
     """
     if occupancy.is_empty():
         return occupancy
@@ -179,10 +178,10 @@ def build_live_features(
     lags: tuple[int, ...] = DEFAULT_LAGS,
     holidays: tuple[dt.date, ...] = VICTORIA_HOLIDAYS_2019,
 ) -> pl.DataFrame:
-    """Construye las mismas columnas que el dataset de entrenamiento.
+    """Build the same columns as the training dataset.
 
-    No añade objetivos: en vivo no existe el futuro todavía. Esa es la única
-    diferencia con `dataset.build_dataset`.
+    No targets are added: live, the future does not exist yet. That is the only
+    difference from `dataset.build_dataset`.
     """
     if occupancy.is_empty():
         return occupancy
@@ -205,7 +204,7 @@ def build_live_features(
 
 
 def latest_features(features: pl.DataFrame) -> pl.DataFrame:
-    """Última fila de cada tramo: el presente, que es desde donde se predice."""
+    """Last row per segment: the present, which is where prediction starts."""
     if features.is_empty():
         return features
     return features.sort("timestamp").group_by("segment_id").last()

@@ -1,18 +1,18 @@
-"""Ingesta del feed de sensores en tiempo real.
+"""Ingestion of the real-time sensor feed.
 
-El dataset de origen se **sobreescribe** en cada ciclo de publicación: solo
-expone el estado actual. Conservar la serie temporal es el trabajo de este
-módulo, y es el dato con el que se entrenará el modelo de producción (ver
+The source dataset is **overwritten** on every publication cycle: it only ever
+exposes the current state. Preserving the time series is this module's job, and
+that series is what the production model will be trained on (see
 `docs/id_crosswalk.md` §5).
 
-Dos decisiones vienen medidas de los datos, no supuestas (ver
+Two decisions come measured from the data rather than assumed (see
 `docs/data_schema.md`):
 
-- Se usa `/exports/json?limit=-1`: una sola petición por snapshot, con
-  coordenadas ya en lon/lat. El export Parquet entrega `location` como WKB
-  binario y el endpoint paginado necesitaría 64 peticiones.
-- La identidad de un snapshot es `max(lastupdated)`, el sello del lote del feed,
-  no la hora del reloj. Ver `snapshot_path`.
+- `/exports/json?limit=-1` is used: one request per snapshot, with coordinates
+  already split into lon/lat. The Parquet export returns `location` as binary
+  WKB and the paginated endpoint would need 64 requests.
+- A snapshot's identity is `max(lastupdated)`, the feed's batch stamp, not the
+  wall clock. See `snapshot_path`.
 """
 
 from __future__ import annotations
@@ -37,15 +37,15 @@ from parking.config import Settings
 
 logger = logging.getLogger(__name__)
 
-#: `status_description` solo toma estos dos valores (verificado: 6324/6324 filas).
-#: `Present` describe el COCHE, no la plaza: significa que la plaza está ocupada.
+#: `status_description` only ever takes these two values (verified: 6324/6324
+#: rows). `Present` describes the CAR, not the bay: it means the bay is taken.
 _OCCUPANCY_BY_STATUS = {"Present": True, "Unoccupied": False}
 
 _UTC_TIMESTAMP = pl.Datetime(time_unit="us", time_zone="UTC")
 
-#: Esquema explícito del snapshot. Se fija a mano en lugar de inferirlo para que
-#: un cambio de tipos en origen falle al escribir, no semanas después al leer.
-#: Los tres últimos campos los añadimos nosotros, no vienen del origen.
+#: Explicit snapshot schema. Pinned by hand instead of inferred so that a type
+#: change upstream fails at write time, not weeks later at read time.
+#: The last three fields are ours; they do not come from the source.
 SNAPSHOT_SCHEMA: dict[str, pl.DataType] = {
     "kerbsideid": pl.Int64(),
     "is_occupied": pl.Boolean(),
@@ -62,12 +62,12 @@ SNAPSHOT_SCHEMA: dict[str, pl.DataType] = {
 
 
 class SnapshotError(RuntimeError):
-    """El feed devolvió algo que no se puede tratar como snapshot válido."""
+    """The feed returned something that cannot be treated as a valid snapshot."""
 
 
 @dataclass(frozen=True)
 class SnapshotResult:
-    """Resultado de capturar un snapshot."""
+    """Outcome of capturing one snapshot."""
 
     path: Path
     rows: int
@@ -77,12 +77,12 @@ class SnapshotResult:
 
     @property
     def skipped_as_duplicate(self) -> bool:
-        """True si el lote ya estaba en disco y no se reescribió."""
+        """True when the batch was already on disk and was not rewritten."""
         return not self.written
 
 
 def export_url(settings: Settings) -> str:
-    """URL del export JSON completo del dataset de sensores."""
+    """URL of the full JSON export of the sensor dataset."""
     return (
         f"{settings.api_base_url}/api/explore/v2.1/catalog/datasets"
         f"/{settings.realtime_dataset}/exports/json"
@@ -90,17 +90,17 @@ def export_url(settings: Settings) -> str:
 
 
 def _is_retryable(exc: BaseException) -> bool:
-    """Reintentar solo fallos transitorios: red, timeouts y 5xx/429."""
+    """Retry only transient failures: network, timeouts and 5xx/429."""
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code == 429 or exc.response.status_code >= 500
     return isinstance(exc, httpx.TransportError)
 
 
 def fetch_records(client: httpx.Client, settings: Settings) -> list[dict]:
-    """Descarga el export completo del feed, con reintentos en fallos transitorios.
+    """Fetch the feed's full export, retrying transient failures.
 
-    Un 4xx distinto de 429 no se reintenta: indica que la petición está mal y
-    repetirla solo gasta cuota.
+    A 4xx other than 429 is not retried: it means the request is wrong, and
+    repeating it only burns quota.
     """
 
     @retry(
@@ -116,17 +116,15 @@ def fetch_records(client: httpx.Client, settings: Settings) -> list[dict]:
         except httpx.HTTPStatusError as exc:
             if not _is_retryable(exc):
                 raise SnapshotError(
-                    f"el feed respondió HTTP {exc.response.status_code}; no se reintenta"
+                    f"the feed answered HTTP {exc.response.status_code}; not retrying"
                 ) from exc
             raise
         try:
             payload = response.json()
         except json.JSONDecodeError as exc:
-            raise SnapshotError("el feed no devolvió JSON válido") from exc
+            raise SnapshotError("the feed did not return valid JSON") from exc
         if not isinstance(payload, list):
-            raise SnapshotError(
-                f"se esperaba una lista de registros, llegó {type(payload).__name__}"
-            )
+            raise SnapshotError(f"expected a list of records, got {type(payload).__name__}")
         return payload
 
     return _get()
@@ -134,49 +132,50 @@ def fetch_records(client: httpx.Client, settings: Settings) -> list[dict]:
 
 def _parse_timestamp(value: str | None, field: str, kerbsideid: object) -> dt.datetime:
     if not value:
-        raise SnapshotError(f"{field} vacío en kerbsideid={kerbsideid!r}")
-    # La API entrega ISO-8601 con offset explícito (+00:00).
+        raise SnapshotError(f"empty {field} for kerbsideid={kerbsideid!r}")
+    # The API returns ISO-8601 with an explicit offset (+00:00).
     parsed = dt.datetime.fromisoformat(value)
     if parsed.tzinfo is None:
-        raise SnapshotError(f"{field} sin zona horaria en kerbsideid={kerbsideid!r}: {value!r}")
+        raise SnapshotError(f"{field} has no timezone for kerbsideid={kerbsideid!r}: {value!r}")
     return parsed.astimezone(dt.UTC)
 
 
 def build_snapshot(records: list[dict], fetched_at: dt.datetime) -> pl.DataFrame:
-    """Normaliza los registros crudos del feed a una tabla con `SNAPSHOT_SCHEMA`.
+    """Normalise raw feed records into a table matching `SNAPSHOT_SCHEMA`.
 
-    Decisiones de normalización:
+    Normalisation decisions:
 
-    - `status_description` se traduce a `is_occupied` booleano. Un valor
-      desconocido es un error, no un `None` silencioso: si la fuente añade un
-      tercer estado, hay que enterarse.
-    - `location` se parte en `latitude`/`longitude`, que es lo que consume el
-      frontend y lo que permite cruzar por coordenadas.
-    - Se calcula `feed_lastupdated = max(lastupdated)` y la bandera
-      `is_live`. Una plaza cuyo `lastupdated` es anterior al del lote no
-      reportó en este ciclo (`docs/data_schema.md` §1.2). La bandera se
-      **marca**, no se filtra: borrar en silencio impediría medir la cobertura.
+    - `status_description` becomes the boolean `is_occupied`. An unknown value
+      is an error, not a silent `None`: if the source adds a third state we
+      need to find out.
+    - `location` is split into `latitude`/`longitude`, which is what the
+      frontend consumes and what allows joining by coordinates.
+    - `feed_lastupdated = max(lastupdated)` and the `is_live` flag are
+      computed. A bay whose `lastupdated` predates the batch stamp did not
+      report in this cycle (`docs/data_schema.md` §1.2). The flag **marks**
+      rather than filters: dropping them silently would make coverage
+      impossible to measure.
     """
     if not records:
-        raise SnapshotError("el feed devolvió 0 registros")
+        raise SnapshotError("the feed returned 0 records")
 
     rows: list[dict] = []
     for record in records:
         kerbsideid = record.get("kerbsideid")
         if kerbsideid is None:
-            raise SnapshotError(f"registro sin kerbsideid: {record!r}")
+            raise SnapshotError(f"record without kerbsideid: {record!r}")
 
         status = record.get("status_description")
         if status not in _OCCUPANCY_BY_STATUS:
             raise SnapshotError(
-                f"status_description desconocido {status!r} en kerbsideid={kerbsideid!r}; "
-                f"esperados {sorted(_OCCUPANCY_BY_STATUS)}"
+                f"unknown status_description {status!r} for kerbsideid={kerbsideid!r}; "
+                f"expected one of {sorted(_OCCUPANCY_BY_STATUS)}"
             )
 
         location = record.get("location") or {}
         latitude, longitude = location.get("lat"), location.get("lon")
         if latitude is None or longitude is None:
-            raise SnapshotError(f"location incompleta en kerbsideid={kerbsideid!r}: {location!r}")
+            raise SnapshotError(f"incomplete location for kerbsideid={kerbsideid!r}: {location!r}")
 
         rows.append(
             {
@@ -199,7 +198,7 @@ def build_snapshot(records: list[dict], fetched_at: dt.datetime) -> pl.DataFrame
 
     duplicates = len(rows) - len({row["kerbsideid"] for row in rows})
     if duplicates:
-        raise SnapshotError(f"{duplicates} kerbsideid duplicados en el snapshot")
+        raise SnapshotError(f"{duplicates} duplicated kerbsideid values in the snapshot")
 
     feed_lastupdated = max(row["lastupdated"] for row in rows)
     for row in rows:
@@ -211,16 +210,16 @@ def build_snapshot(records: list[dict], fetched_at: dt.datetime) -> pl.DataFrame
 
 
 def snapshot_path(settings: Settings, feed_lastupdated: dt.datetime) -> Path:
-    """Ruta del snapshot, derivada del sello del lote del feed.
+    """Snapshot path, derived from the feed's batch stamp.
 
-    Nombrar por `feed_lastupdated` y no por la hora del reloj es lo que da
-    idempotencia: el feed publica cada ~2 min y el poller sondea cada 5, pero
-    un reintento o un reinicio pueden volver a leer el mismo lote. Con esta
-    ruta, ese caso reescribe la misma celda en lugar de añadir un duplicado que
-    luego habría que deduplicar en las features.
+    Naming by `feed_lastupdated` rather than by wall clock is what gives
+    idempotency: the feed publishes every ~2 min while the poller polls every
+    2 min too, but a retry or a restart can re-read the same batch. With this
+    path, that case rewrites the same cell instead of adding a duplicate that
+    would later have to be de-duplicated during feature building.
 
-    Partición `date=YYYY-MM-DD` según el plan, en UTC para que no se mueva con
-    el horario de verano de Melbourne.
+    Partitioned as `date=YYYY-MM-DD` per the plan, in UTC so the partition does
+    not shift with Melbourne's daylight saving.
     """
     stamp = feed_lastupdated.astimezone(dt.UTC)
     return (
@@ -231,15 +230,15 @@ def snapshot_path(settings: Settings, feed_lastupdated: dt.datetime) -> Path:
 
 
 def write_snapshot(frame: pl.DataFrame, path: Path, *, overwrite: bool = False) -> bool:
-    """Escribe el snapshot. Devuelve `False` si ya existía y no se sobreescribe.
+    """Write the snapshot. Returns `False` if it already existed and is kept.
 
-    La escritura es atómica: se escribe a un temporal en el mismo directorio y
-    se renombra. Así un poller interrumpido a media escritura no deja un
-    Parquet truncado que rompa las lecturas posteriores.
+    The write is atomic: a temporary file in the same directory is written and
+    then renamed. That way a poller interrupted mid-write does not leave a
+    truncated Parquet that breaks every later read.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and not overwrite:
-        logger.info("snapshot %s ya existe; no se reescribe", path.name)
+        logger.info("snapshot %s already exists; not rewriting", path.name)
         return False
 
     with tempfile.NamedTemporaryFile(
@@ -261,7 +260,7 @@ def capture_snapshot(
     *,
     now: dt.datetime | None = None,
 ) -> SnapshotResult:
-    """Captura un snapshot del feed y lo persiste. Idempotente por lote."""
+    """Capture one snapshot of the feed and persist it. Idempotent per batch."""
     fetched_at = now or dt.datetime.now(dt.UTC)
     records = fetch_records(client, settings)
     frame = build_snapshot(records, fetched_at)
@@ -272,13 +271,13 @@ def capture_snapshot(
     written = write_snapshot(frame, path)
 
     logger.info(
-        "snapshot lote=%s plazas=%d vivas=%d (%.1f%%) -> %s%s",
+        "snapshot batch=%s bays=%d live=%d (%.1f%%) -> %s%s",
         feed_lastupdated.isoformat(),
         frame.height,
         live_rows,
         live_rows / frame.height * 100,
         path.name,
-        "" if written else " (duplicado, omitido)",
+        "" if written else " (duplicate, skipped)",
     )
     return SnapshotResult(
         path=path,

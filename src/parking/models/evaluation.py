@@ -1,24 +1,23 @@
-"""Métricas y desgloses para comparar modelos.
+"""Metrics and breakdowns for comparing models.
 
-La exactitud no sirve aquí y conviene decir por qué: el objetivo es positivo el
-94-96 % de las veces (ver `docs/dataset.md`), así que contestar siempre "sí"
-acierta el 95 %. Una métrica que premia eso no distingue un modelo útil de uno
-inútil.
+Accuracy is useless here, and it is worth saying why: the target is positive
+94-96% of the time (see `docs/dataset.md`), so always answering "yes" scores
+95%. A metric that rewards that cannot tell a useful model from a useless one.
 
-Se usan en su lugar:
+Used instead:
 
-- **Brier score**: error cuadrático medio de la probabilidad. Más bajo, mejor.
-- **Log loss**: penaliza con dureza la confianza equivocada.
-- **Curva de calibración**: de las veces que el modelo dijo 0,8, ¿pasó el 80 %?
-  Un modelo puede ordenar bien y estar mal calibrado, y para este producto la
-  calibración *es* el entregable: la pantalla muestra una probabilidad.
+- **Brier score**: mean squared error of the probability. Lower is better.
+- **Log loss**: punishes confident mistakes hard.
+- **Calibration curve**: of the times the model said 0.8, did it happen 80% of
+  the time? A model can rank well and be badly calibrated, and for this product
+  calibration *is* the deliverable: the screen shows a probability.
 
-Y dos desgloses que el plan pide explícitamente, porque la media global esconde
-justo el caso que importa:
+Plus two breakdowns the plan explicitly asks for, because the global mean hides
+exactly the case that matters:
 
-- **Por hora del día**.
-- **Por nivel de ocupación actual**. Nadie necesita que le digan que hay sitio
-  en una calle vacía; el valor está en las zonas casi llenas.
+- **By hour of day**.
+- **By current occupancy level.** Nobody needs to be told there is space on an
+  empty street; the value is in the nearly full zones.
 """
 
 from __future__ import annotations
@@ -30,27 +29,27 @@ from parking.models.baselines import clip_probabilities
 
 
 def brier_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
-    """Error cuadrático medio entre probabilidad y resultado."""
+    """Mean squared error between probability and outcome."""
     return float(np.mean((y_prob - y_true) ** 2))
 
 
 def log_loss(y_true: np.ndarray, y_prob: np.ndarray) -> float:
-    """Log loss con recorte previo, para que un 0/1 equivocado no dé infinito."""
+    """Log loss with prior clipping, so a wrong 0/1 does not return infinity."""
     clipped = clip_probabilities(y_prob)
     return float(-np.mean(y_true * np.log(clipped) + (1 - y_true) * np.log(1 - clipped)))
 
 
 def base_rate(y_true: np.ndarray) -> float:
-    """Proporción de positivos. Es el contexto sin el que las métricas no se leen."""
+    """Share of positives. The context without which the metrics cannot be read."""
     return float(np.mean(y_true))
 
 
 def skill_score(metric: float, reference: float) -> float:
-    """Mejora relativa frente a una referencia. Positivo = mejor que la referencia.
+    """Relative improvement over a reference. Positive means better.
 
-    `1 - metric/reference`, la forma habitual del Brier skill score. Es lo que
-    responde a la pregunta del proyecto: ¿cuánto aporta predecir frente a usar
-    el estado actual?
+    `1 - metric/reference`, the usual form of the Brier skill score. It answers
+    the project's question: how much does predicting add over using the current
+    state?
     """
     if reference == 0:
         return float("nan")
@@ -58,7 +57,7 @@ def skill_score(metric: float, reference: float) -> float:
 
 
 def evaluate(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, float]:
-    """Métricas principales de un conjunto de predicciones."""
+    """Headline metrics for one set of predictions."""
     return {
         "n": float(len(y_true)),
         "base_rate": base_rate(y_true),
@@ -69,19 +68,19 @@ def evaluate(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, float]:
 
 
 def calibration_curve(y_true: np.ndarray, y_prob: np.ndarray, *, bins: int = 10) -> pl.DataFrame:
-    """Curva de calibración por deciles de probabilidad predicha.
+    """Calibration curve over deciles of predicted probability.
 
-    Devuelve, por tramo de probabilidad, cuántas observaciones cayeron en él,
-    la probabilidad media que predijo el modelo y la frecuencia real. Si el
-    modelo está calibrado, las dos últimas columnas coinciden.
+    Returns, per probability band, how many observations fell in it, the mean
+    probability the model predicted and the observed frequency. For a
+    calibrated model the last two columns match.
 
-    Los tramos vacíos no aparecen: un baseline que solo emite dos valores
-    distintos ocupa dos tramos, y mostrar ocho filas vacías sugeriría que falta
-    información en vez de que el modelo es así.
+    Empty bands are omitted: a baseline emitting only two distinct values
+    occupies two bands, and showing eight empty rows would suggest missing
+    information rather than a model that simply behaves that way.
     """
     edges = np.linspace(0.0, 1.0, bins + 1)
-    # `right=False` y el clip final evitan que la probabilidad 1,0 caiga en un
-    # tramo inexistente por encima del último.
+    # `right=False` plus the final clip keep probability 1.0 from landing in a
+    # non-existent band above the last one.
     indices = np.clip(np.digitize(y_prob, edges[1:-1], right=False), 0, bins - 1)
 
     frame = pl.DataFrame({"bin": indices.astype(np.int32), "y_true": y_true, "y_prob": y_prob})
@@ -109,10 +108,10 @@ def breakdown(
     *,
     by: str,
 ) -> pl.DataFrame:
-    """Brier por modelo y por grupo (`by`), más el skill frente a la persistencia.
+    """Brier per model and per group (`by`), for comparing against persistence.
 
-    `predictions` es `{nombre_modelo: probabilidades}`. La columna `by` debe
-    existir en `frame`.
+    `predictions` is `{model_name: probabilities}`. The `by` column must exist
+    in `frame`.
     """
     data = {"group": frame[by].to_numpy(), "y_true": y_true}
     for name, values in predictions.items():
@@ -131,34 +130,34 @@ def breakdown(
 
 
 def occupancy_bucket() -> pl.Expr:
-    """Expresión que clasifica cada fila por lo llena que está la zona **ahora**.
+    """Expression classifying each row by how full the zone is **right now**.
 
-    Se usa como `frame.with_columns(occupancy_bucket())`.
+    Used as `frame.with_columns(occupancy_bucket())`.
 
-    Los cortes no son uniformes a propósito: lo interesante ocurre cerca del
-    lleno, así que los tramos superiores son más finos. Separar "lleno" (cero
-    plazas) de "casi lleno" importa porque son situaciones distintas para el
-    conductor y para el modelo.
+    The cuts are deliberately uneven: what matters happens near full, so the
+    upper bands are finer. Separating "full" (zero bays) from "nearly full"
+    matters because they are different situations for the driver and for the
+    model.
     """
     return (
         pl.when(pl.col("free_bays") == 0)
-        .then(pl.lit("0 libres (lleno)"))
+        .then(pl.lit("0 free (full)"))
         .when(pl.col("free_bays") == 1)
-        .then(pl.lit("1 libre"))
+        .then(pl.lit("1 free"))
         .when(pl.col("free_bays") == 2)
-        .then(pl.lit("2 libres"))
+        .then(pl.lit("2 free"))
         .when(pl.col("free_bays") <= 5)
-        .then(pl.lit("3-5 libres"))
-        .otherwise(pl.lit("6+ libres"))
+        .then(pl.lit("3-5 free"))
+        .otherwise(pl.lit("6+ free"))
         .alias("occupancy_bucket")
     )
 
 
 def comparison_table(results: dict[str, dict[str, float]]) -> pl.DataFrame:
-    """Tabla comparativa de modelos, ordenada por Brier.
+    """Model comparison table, sorted by Brier.
 
-    Incluye el skill frente a `persistence` si está presente, que es la columna
-    que responde a la pregunta del proyecto.
+    Includes the skill against `persistence` when present, which is the column
+    that answers the project's question.
     """
     reference = results.get("persistence", {}).get("brier")
     rows = []

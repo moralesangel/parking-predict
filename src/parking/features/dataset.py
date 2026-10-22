@@ -1,23 +1,24 @@
-"""Construcción del dataset de entrenamiento.
+"""Construction of the training dataset.
 
-Define el problema de predicción de la Fase 4:
+Defines the phase 4 prediction problem:
 
-> dado el estado de un tramo en `t`, ¿cuál es la probabilidad de que haya **al
-> menos una plaza libre** en `t + h`, con `h` ∈ {5, 10, 15, 30} minutos?
+> given a segment's state at `t`, what is the probability that **at least one
+> bay is free** at `t + h`, for `h` in {5, 10, 15, 30} minutes?
 
-Decisiones que condicionan todo lo demás:
+Decisions that shape everything downstream:
 
-- **El objetivo se mide en `t + h`, no en `t`.** Suena obvio y es el punto del
-  proyecto: la referencia a batir es la persistencia, que responde con el
-  estado actual.
-- **Un objetivo por horizonte**, en columnas separadas (`target_h5`, `target_h10`…).
-  Permite entrenar y evaluar cada horizonte por separado, que es como pide
-  desglosar los resultados la Fase 5.
-- **También se guarda `free_bays` futuro** (`free_bays_h5`…). Es la alternativa
-  que el plan manda evaluar: predecir el número de plazas y derivar de ahí la
-  probabilidad, en vez de clasificar directamente.
-- **Ninguna feature mira al futuro.** Todas se calculan con información
-  disponible en `t`. Es el error que infla las métricas sin que nada falle.
+- **The target is measured at `t + h`, not at `t`.** Obvious as it sounds, it
+  is the whole point of the project: the baseline to beat is persistence,
+  which answers with the current state.
+- **One target per horizon**, in separate columns (`target_h5`, `target_h10`,
+  ...). That allows training and evaluating each horizon independently, which
+  is how phase 5 asks for the results to be broken down.
+- **The future `free_bays` count is stored too** (`free_bays_h5`, ...). That is
+  the alternative the plan requires evaluating: predicting the count and
+  deriving the probability from it instead of classifying directly.
+- **No feature looks into the future.** Every one is computed from information
+  available at `t`. That is the mistake that inflates metrics without anything
+  failing.
 """
 
 from __future__ import annotations
@@ -27,43 +28,42 @@ from dataclasses import dataclass
 
 import polars as pl
 
-#: Horizontes de predicción en minutos, según el plan.
+#: Prediction horizons in minutes, per the plan.
 DEFAULT_HORIZONS = (5, 10, 15, 30)
 
-#: Retardos en minutos para las features de historia reciente.
+#: Lags in minutes for the recent-history features.
 DEFAULT_LAGS = (5, 10, 15, 30, 60)
 
-#: Festivos de Victoria (Australia) en 2019, que es el estado de Melbourne.
-#: Tomados del registro público de festivos victorianos. **Conviene
-#: verificarlos contra la fuente oficial antes de sacar conclusiones de la
-#: Fase 5**: un festivo mal puesto no rompe nada, solo mete ruido en la feature.
-#: Los de fecha móvil son los que más riesgo tienen (el viernes previo a la
-#: final de la AFL y la Melbourne Cup).
+#: Victoria (Australia) public holidays in 2019 -- Melbourne's state. Taken
+#: from the public holiday register. **They should be verified against the
+#: official source before drawing conclusions from phase 5**: a wrong holiday
+#: breaks nothing, it only adds noise to one feature. The movable ones carry
+#: the most risk (the Friday before the AFL Grand Final, and Melbourne Cup).
 VICTORIA_HOLIDAYS_2019: tuple[dt.date, ...] = (
-    dt.date(2019, 1, 1),  # Año nuevo
-    dt.date(2019, 1, 28),  # Australia Day (trasladado: el 26 cayó en sábado)
+    dt.date(2019, 1, 1),  # New Year's Day
+    dt.date(2019, 1, 28),  # Australia Day (observed: the 26th fell on a Saturday)
     dt.date(2019, 3, 11),  # Labour Day
-    dt.date(2019, 4, 19),  # Viernes Santo
-    dt.date(2019, 4, 20),  # Sábado de Pascua
-    dt.date(2019, 4, 21),  # Domingo de Pascua
-    dt.date(2019, 4, 22),  # Lunes de Pascua
+    dt.date(2019, 4, 19),  # Good Friday
+    dt.date(2019, 4, 20),  # Easter Saturday
+    dt.date(2019, 4, 21),  # Easter Sunday
+    dt.date(2019, 4, 22),  # Easter Monday
     dt.date(2019, 4, 25),  # ANZAC Day
     dt.date(2019, 6, 10),  # Queen's Birthday
-    dt.date(2019, 9, 27),  # Viernes previo a la final de la AFL
+    dt.date(2019, 9, 27),  # Friday before the AFL Grand Final
     dt.date(2019, 11, 5),  # Melbourne Cup
-    dt.date(2019, 12, 25),  # Navidad
+    dt.date(2019, 12, 25),  # Christmas Day
     dt.date(2019, 12, 26),  # Boxing Day
 )
 
 
 @dataclass(frozen=True)
 class TemporalSplit:
-    """Partición temporal del dataset.
+    """Temporal partition of the dataset.
 
-    Nunca aleatoria. Un split aleatorio pondría en entrenamiento el instante
-    `t+5` y en test el `t`, que están correlacionadísimos: el modelo parecería
-    excelente y sería incapaz de predecir el futuro real. Con series temporales
-    el único corte honesto es por tiempo.
+    Never random. A random split would put instant `t+5` in training and `t` in
+    test, and those are overwhelmingly correlated: the model would look
+    excellent and be unable to predict the actual future. With time series the
+    only honest cut is by time.
     """
 
     train: pl.DataFrame
@@ -92,12 +92,11 @@ class TemporalSplit:
 
 
 def add_time_features(frame: pl.DataFrame, *, holidays: tuple[dt.date, ...] = ()) -> pl.DataFrame:
-    """Features de calendario.
+    """Calendar features.
 
-    `minute_of_day` va como seno y coseno además de crudo: la medianoche está a
-    un minuto de las 23:59, y un entero plano le dice al modelo que están a
-    1439 de distancia. Los árboles pueden aprender el salto partiendo el rango,
-    pero no gratis.
+    `minute_of_day` is added as sine and cosine as well as raw: midnight is one
+    minute away from 23:59, and a flat integer tells the model they are 1439
+    apart. Trees can learn the wrap by splitting the range, but not for free.
     """
     minute_of_day = pl.col("timestamp").dt.hour() * 60 + pl.col("timestamp").dt.minute()
     angle = 2 * 3.141592653589793 * minute_of_day / 1440
@@ -106,7 +105,7 @@ def add_time_features(frame: pl.DataFrame, *, holidays: tuple[dt.date, ...] = ()
         minute_of_day=minute_of_day.cast(pl.Int16),
         minute_sin=angle.sin(),
         minute_cos=angle.cos(),
-        day_of_week=pl.col("timestamp").dt.weekday().cast(pl.Int8),  # 1 = lunes
+        day_of_week=pl.col("timestamp").dt.weekday().cast(pl.Int8),  # 1 = Monday
         is_weekend=(pl.col("timestamp").dt.weekday() >= 6),
         is_holiday=pl.col("timestamp").dt.date().is_in(list(holidays)),
     )
@@ -118,13 +117,13 @@ def add_lag_features(
     lags: tuple[int, ...] = DEFAULT_LAGS,
     grid_minutes: int = 5,
 ) -> pl.DataFrame:
-    """Historia reciente de cada tramo: retardos, tendencias y medias móviles.
+    """Recent history per segment: lags, trends and rolling means.
 
-    Los retardos se expresan en minutos y se traducen a número de filas usando
-    `grid_minutes`. Eso **asume una rejilla sin huecos**, que es lo que produce
-    `occupancy.occupancy_series`: ahí cada tramo tiene una fila por instante,
-    incluso sin eventos. Sobre una rejilla con huecos, `shift` saltaría a un
-    instante arbitrario y la feature mentiría en silencio.
+    Lags are expressed in minutes and translated into a row count using
+    `grid_minutes`. That **assumes a gap-free grid**, which is what
+    `occupancy.occupancy_series` produces: every segment gets one row per
+    instant, even with no events. Over a grid with holes, `shift` would jump to
+    an arbitrary instant and the feature would lie silently.
     """
     expressions: list[pl.Expr] = []
     for lag in lags:
@@ -141,9 +140,9 @@ def add_lag_features(
 
     frame = frame.with_columns(expressions)
 
-    # Tendencias: cuanto ha cambiado respecto a hace N minutos. Un tramo que se
-    # esta vaciando y otro que se esta llenando pueden tener la misma ocupacion
-    # ahora y futuros opuestos.
+    # Trends: how much has changed since N minutes ago. A segment that is
+    # emptying and one that is filling can show the same occupancy now and
+    # opposite futures.
     trends = [
         (pl.col("free_bays") - pl.col(f"free_bays_lag{lag}")).alias(f"free_bays_trend{lag}")
         for lag in lags
@@ -161,15 +160,15 @@ def add_lag_features(
 def add_neighbour_features(
     frame: pl.DataFrame, adjacency: dict[str, frozenset[str]]
 ) -> pl.DataFrame:
-    """Ocupación agregada de los tramos vecinos en el mismo instante.
+    """Aggregated occupancy of neighbouring segments at the same instant.
 
-    Es información legítima en `t`: el estado de la manzana de al lado se
-    conoce ahora, no en el futuro. Y es la que distingue "esta zona está llena
-    pero la de al lado vacía" de "todo el barrio está lleno", que llevan a
-    decisiones distintas.
+    This is legitimate information at `t`: the state of the next block is known
+    now, not in the future. And it is what distinguishes "this zone is full but
+    the next one is empty" from "the whole neighbourhood is full", which lead
+    to different decisions.
 
-    Los tramos sin vecinos conocidos reciben nulos, no ceros: un cero diría
-    "los vecinos están llenos", que es una afirmación, no una ausencia.
+    Segments with no known neighbours get nulls, not zeros: a zero would say
+    "the neighbours are full", which is a claim rather than an absence.
     """
     pairs = [
         {"segment_id": segment, "neighbour_id": neighbour}
@@ -208,15 +207,15 @@ def add_targets(
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     grid_minutes: int = 5,
 ) -> pl.DataFrame:
-    """Objetivos por horizonte: plazas libres en `t+h` y si hay al menos una.
+    """Targets per horizon: free bays at `t+h` and whether at least one exists.
 
-    Se guardan ambos. `target_hN` es la clasificación que pide el plan;
-    `free_bays_hN` permite la alternativa de predecir el recuento y derivar la
-    probabilidad, que la Fase 5 debe comparar.
+    Both are stored. `target_hN` is the classification the plan asks for;
+    `free_bays_hN` enables the alternative of predicting the count and deriving
+    the probability, which phase 5 must compare.
 
-    Las últimas filas de cada tramo quedan con objetivo nulo porque su futuro
-    cae fuera de la ventana. Se marcan, no se rellenan: imputarlas inventaría
-    etiquetas.
+    The last rows of each segment end up with a null target because their
+    future falls outside the window. They are marked, not filled: imputing them
+    would invent labels.
     """
     expressions: list[pl.Expr] = []
     for horizon in horizons:
@@ -236,11 +235,11 @@ def build_dataset(
     grid_minutes: int = 5,
     holidays: tuple[dt.date, ...] = VICTORIA_HOLIDAYS_2019,
 ) -> pl.DataFrame:
-    """Ensambla el dataset completo a partir de la serie de ocupación.
+    """Assemble the full dataset from the occupancy series.
 
-    El orden importa: primero `occupancy_rate`, del que dependen los retardos y
-    las features de vecinos; después los objetivos, que miran al futuro y deben
-    construirse sobre la rejilla ya completa.
+    Order matters: `occupancy_rate` first, since lags and neighbour features
+    depend on it; targets last, since they look into the future and must be
+    built on the already complete grid.
     """
     frame = occupancy.sort("segment_id", "timestamp").with_columns(
         occupancy_rate=pl.when(pl.col("total_bays") > 0)
@@ -257,19 +256,19 @@ def build_dataset(
 def temporal_split(
     frame: pl.DataFrame, *, train_end: dt.datetime, validation_end: dt.datetime
 ) -> TemporalSplit:
-    """Parte el dataset por tiempo. Nunca al azar.
+    """Split the dataset by time. Never at random.
 
-    Los cortes son por `timestamp`, de modo que cada fila de validación y de
-    test es posterior a todo el entrenamiento.
+    The cuts are on `timestamp`, so every validation and test row is later than
+    all of training.
 
-    Aviso que la Fase 5 debe tener presente: con horizonte `h`, la etiqueta de
-    la última fila de entrenamiento procede del instante `train_end + h`, que
-    cae ya en validación. Es una fuga de `h` minutos en la frontera. Con
-    `h ≤ 30 min` sobre meses de datos es despreciable, pero si se acortan los
-    splits hay que descartar las últimas `h` filas de cada bloque.
+    Caveat phase 5 must keep in mind: with horizon `h`, the label of the last
+    training row comes from `train_end + h`, which already falls inside
+    validation. That is an `h`-minute leak at the boundary. With `h <= 30 min`
+    over months of data it is negligible, but if the splits get shorter the
+    last `h` rows of each block must be dropped.
     """
     if validation_end <= train_end:
-        raise ValueError("validation_end debe ser posterior a train_end")
+        raise ValueError("validation_end must be later than train_end")
 
     return TemporalSplit(
         train=frame.filter(pl.col("timestamp") < train_end),
@@ -283,12 +282,11 @@ def temporal_split(
 
 
 def feature_columns(frame: pl.DataFrame) -> list[str]:
-    """Columnas utilizables como entrada del modelo.
+    """Columns usable as model input.
 
-    Excluye los identificadores, el instante y **todas** las columnas de
-    objetivo. Que esta lista se derive de los datos y no se escriba a mano es lo
-    que evita que una columna futura se cuele como feature al añadir un
-    horizonte nuevo.
+    Excludes the identifiers, the timestamp and **every** target column. That
+    this list is derived from the data rather than hand-written is what stops a
+    future column from sneaking in as a feature when a new horizon is added.
     """
     excluded = {"segment_id", "timestamp"}
     return [

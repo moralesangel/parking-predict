@@ -1,20 +1,21 @@
-"""Baselines obligatorios, en el orden que fija el plan.
+"""The mandatory baselines, in the order the plan sets out.
 
-El proyecto entero existe para responder a una pregunta: ¿sirve de algo predecir
-si ya hay datos en tiempo real? La respuesta honesta exige una referencia dura,
-y esa referencia es la **persistencia**: contestar con el estado actual.
+The whole project exists to answer one question: is there any point predicting
+when real-time data already exists? An honest answer needs a hard reference,
+and that reference is **persistence**: answering with the current state.
 
-Se implementan tres, de menos a más exigente:
+Three are implemented, from weakest to most demanding:
 
-1. `PersistenceBaseline` — la del plan, literal: si ahora hay sitio, habrá sitio.
-2. `CalibratedPersistence` — la misma idea pero devolviendo la probabilidad
-   empírica de que el estado se mantenga. Es la referencia *justa*, y la
-   difícil de batir.
-3. `HistoricalMeanBaseline` — media histórica por tramo, día de la semana y
-   franja horaria.
+1. `PersistenceBaseline` - the plan's, literally: if there is space now, there
+   will be space.
+2. `CalibratedPersistence` - the same idea, but returning the empirical
+   probability that the state holds. This is the *fair* reference, and the hard
+   one to beat.
+3. `HistoricalMeanBaseline` - historical mean per segment, weekday and hour
+   bucket.
 
-Todos exponen la misma interfaz: `fit(frame, target)` y `predict_proba(frame)`,
-que devuelve P(hay al menos una plaza libre en `t+h`).
+All three share the same interface: `fit(frame, target)` and
+`predict_proba(frame)`, which returns P(at least one free bay at `t+h`).
 """
 
 from __future__ import annotations
@@ -24,28 +25,28 @@ from dataclasses import dataclass, field
 import numpy as np
 import polars as pl
 
-#: Las probabilidades se recortan antes de calcular log loss. Un baseline que
-#: dice 0 o 1 y se equivoca una sola vez daría log loss infinita, y comparar
-#: infinitos no informa de nada. El recorte es parte de la evaluación, no una
-#: corrección del modelo: se aplica igual a todos para que la comparación sea
-#: justa, y se documenta porque penaliza a los baselines duros.
+#: Probabilities are clipped before computing log loss. A baseline that answers
+#: 0 or 1 and gets one case wrong would score infinite log loss, and comparing
+#: infinities says nothing. The clip is part of the evaluation, not a fix to
+#: the model: it is applied identically to all of them so the comparison stays
+#: fair, and it is documented because it penalises the hard baselines.
 PROBABILITY_EPSILON = 1e-6
 
 
 def clip_probabilities(values: np.ndarray, epsilon: float = PROBABILITY_EPSILON) -> np.ndarray:
-    """Lleva las probabilidades a `[epsilon, 1-epsilon]`."""
+    """Clamp probabilities into `[epsilon, 1-epsilon]`."""
     return np.clip(values, epsilon, 1.0 - epsilon)
 
 
 @dataclass
 class PersistenceBaseline:
-    """El estado en `t+h` es el estado actual. La referencia del plan.
+    """The state at `t+h` is the state now. The plan's reference.
 
-    Devuelve 1,0 si el tramo tiene ahora al menos una plaza libre y 0,0 si no.
-    Es determinista: no aprende nada y `fit` no hace nada.
+    Returns 1.0 when the segment currently has at least one free bay and 0.0
+    otherwise. It is deterministic: it learns nothing and `fit` is a no-op.
 
-    Es durísima de batir a horizontes cortos, y ése es el punto. Si a 5 minutos
-    nadie la mejora, el resultado válido es decirlo.
+    It is brutally hard to beat at short horizons, and that is the point. If
+    nobody improves on it at 5 minutes, the valid result is to say so.
     """
 
     def fit(self, frame: pl.DataFrame, target: str) -> PersistenceBaseline:
@@ -57,16 +58,16 @@ class PersistenceBaseline:
 
 @dataclass
 class CalibratedPersistence:
-    """Persistencia que devuelve la probabilidad empírica de que el estado dure.
+    """Persistence returning the empirical probability that the state holds.
 
-    En vez de contestar 0 o 1, contesta "de las veces que un tramo tenía sitio,
-    ¿en qué fracción seguía habiéndolo `h` minutos después?". Esa fracción se
-    estima **solo con los datos de entrenamiento**.
+    Instead of answering 0 or 1, it answers "of the times a segment had space,
+    in what fraction was there still space `h` minutes later?". That fraction
+    is estimated **only from the training data**.
 
-    Es la referencia justa: tiene la misma información que la persistencia cruda
-    —el estado actual, nada más— pero expresada como probabilidad, así que no la
-    castiga el recorte del log loss. Un modelo que no bata a ésta no está
-    aportando nada que no estuviera ya en el estado actual.
+    This is the fair reference: it has exactly the same information as raw
+    persistence - the current state, nothing more - but expressed as a
+    probability, so the log-loss clip does not punish it. A model that cannot
+    beat this one is adding nothing that was not already in the current state.
     """
 
     rates: dict[bool, float] = field(default_factory=dict)
@@ -94,22 +95,23 @@ class CalibratedPersistence:
 
 @dataclass
 class HistoricalMeanBaseline:
-    """Media histórica por tramo, día de la semana y franja horaria.
+    """Historical mean per segment, weekday and hour bucket.
 
-    Captura el patrón regular —los martes a las 11 esta calle suele estar
-    llena— pero **ignora por completo el estado actual**. Es el contrapunto
-    exacto de la persistencia, que solo usa el estado actual y ningún patrón.
-    Comparar las dos dice cuánta de la señal es rutina y cuánta es la situación
-    del momento.
+    It captures the regular pattern - this street is usually full on Tuesdays
+    at 11 - but **completely ignores the current state**. It is the exact
+    counterpoint to persistence, which uses only the current state and no
+    pattern at all. Comparing the two says how much of the signal is routine
+    and how much is the situation right now.
 
-    `bucket_minutes` agrupa la hora en franjas. Con franjas de 60 min y un año
-    de datos, cada combinación (tramo, día, franja) tiene ~52 observaciones;
-    bajar a 15 min las dejaría en ~13 y la media sería ruido.
+    `bucket_minutes` groups the hour into bands. With 60-minute bands and a
+    year of data each (segment, weekday, bucket) combination holds ~52
+    observations; dropping to 15 minutes would leave ~13 and the mean would be
+    noise.
 
-    Las combinaciones no vistas en entrenamiento caen por una jerarquía de
-    respaldo —tramo+franja, luego tramo, luego global— en lugar de a un 0,5
-    arbitrario. Un tramo que siempre está lleno no tiene un 50 % de
-    probabilidad solo porque falte su martes.
+    Combinations unseen in training fall through a backoff hierarchy -
+    segment+bucket, then segment, then global - rather than to an arbitrary
+    0.5. A segment that is always full does not have a 50% probability just
+    because its Tuesday is missing.
     """
 
     bucket_minutes: int = 60

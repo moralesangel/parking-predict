@@ -1,8 +1,8 @@
-"""Modelos de respuesta de la API.
+"""API response models.
 
-Se declaran explícitamente en lugar de devolver diccionarios para que el esquema
-de OpenAPI documente la semántica —en particular la de `quality`, que es la
-parte que un consumidor puede malinterpretar con más facilidad.
+Declared explicitly rather than returning plain dictionaries so the OpenAPI
+schema documents the semantics - in particular that of `quality`, which is the
+part a consumer is most likely to misread.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from pydantic import BaseModel, Field
 
 
 class Quality(StrEnum):
-    """Fiabilidad de la lectura de una plaza.
+    """Reliability of a bay's reading.
 
-    Los tres valores vienen de `parking.quality.flags`. Se exponen tal cual
-    porque el cliente necesita distinguirlos: `offline` y `stuck` son ambos
-    "sin dato fiable", pero su causa es distinta y conviene poder mostrarla.
+    The three values come from `parking.quality.flags`. They are exposed as-is
+    because the client needs to tell them apart: `offline` and `stuck` both
+    mean "no reliable data", but their cause differs and it is worth showing.
     """
 
     OK = "ok"
@@ -27,11 +27,11 @@ class Quality(StrEnum):
 
 
 class BayState(StrEnum):
-    """Estado de una plaza tal como lo pinta el mapa.
+    """A bay's state as the map paints it.
 
-    `UNKNOWN` es un estado de primera clase, no un hueco: 2767 de las 6324
-    plazas del feed no dan lectura fiable, y pintarlas como libres sería
-    inventarse plazas que quizá no existen.
+    `UNKNOWN` is a first-class state, not a hole: 2767 of the feed's 6324 bays
+    give no reliable reading, and painting them as free would invent bays that
+    may not exist.
     """
 
     FREE = "free"
@@ -40,24 +40,24 @@ class BayState(StrEnum):
 
 
 class Bay(BaseModel):
-    """Una plaza en el snapshot actual."""
+    """One bay in the current snapshot."""
 
-    kerbsideid: int = Field(description="Identificador de la plaza en el feed de origen")
-    state: BayState = Field(description="free, occupied o unknown (sin lectura fiable)")
-    quality: Quality = Field(description="Por qué la lectura es o no fiable")
-    is_reliable: bool = Field(description="True solo si quality == ok")
+    kerbsideid: int = Field(description="Bay identifier in the source feed")
+    state: BayState = Field(description="free, occupied or unknown (no reliable reading)")
+    quality: Quality = Field(description="Why the reading is or is not reliable")
+    is_reliable: bool = Field(description="True only when quality == ok")
     latitude: float
     longitude: float
     zone_number: int | None = Field(
-        default=None, description="Zona de restricción; nula en 520 de las 6324 plazas"
+        default=None, description="Restriction zone; null for 520 of the 6324 bays"
     )
     status_age_hours: float = Field(
-        description="Horas desde el último cambio de estado, medidas contra el sello del lote"
+        description="Hours since the last state change, measured against the batch stamp"
     )
 
 
 class QualityBreakdown(BaseModel):
-    """Recuento de plazas por estado de calidad."""
+    """Bay counts per quality state."""
 
     ok: int
     stuck: int
@@ -65,33 +65,33 @@ class QualityBreakdown(BaseModel):
 
 
 class Summary(BaseModel):
-    """Resumen del snapshot. Es lo que permite leer la cifra correcta de un vistazo."""
+    """Snapshot summary. This is what makes the correct figure readable at a glance."""
 
-    total_bays: int = Field(description="Plazas que publica el feed")
-    reliable_bays: int = Field(description="Plazas con lectura utilizable")
-    free_bays: int = Field(description="Plazas libres entre las fiables")
-    occupied_bays: int = Field(description="Plazas ocupadas entre las fiables")
+    total_bays: int = Field(description="Bays published by the feed")
+    reliable_bays: int = Field(description="Bays with a usable reading")
+    free_bays: int = Field(description="Free bays among the reliable ones")
+    occupied_bays: int = Field(description="Occupied bays among the reliable ones")
     occupancy_pct: float | None = Field(
-        description="Ocupación sobre plazas fiables. Nula si no hay ninguna: "
-        "un 0 significaría 'todo libre', que es lo contrario de 'no se sabe'"
+        description="Occupancy over reliable bays. Null when there are none: "
+        "a 0 would mean 'everything free', which is the opposite of 'unknown'"
     )
-    coverage_pct: float = Field(description="Porcentaje de plazas con lectura fiable")
+    coverage_pct: float = Field(description="Share of bays with a reliable reading")
     by_quality: QualityBreakdown
 
 
 class SnapshotInfo(BaseModel):
-    """De cuándo son los datos que se están sirviendo."""
+    """How old the data being served is."""
 
-    feed_lastupdated: dt.datetime = Field(description="Sello del lote del feed, en UTC")
+    feed_lastupdated: dt.datetime = Field(description="Feed batch stamp, in UTC")
     served_at: dt.datetime
-    age_seconds: float = Field(description="Antigüedad del lote en el momento de servir")
+    age_seconds: float = Field(description="Age of the batch at serving time")
     is_stale: bool = Field(
-        description="True si el lote es más viejo de lo tolerable: el poller puede estar caído"
+        description="True when the batch is older than tolerable: the poller may be down"
     )
 
 
 class LiveResponse(BaseModel):
-    """Respuesta de `GET /bays/live`."""
+    """Response of `GET /bays/live`."""
 
     snapshot: SnapshotInfo
     summary: Summary
@@ -100,7 +100,7 @@ class LiveResponse(BaseModel):
 
 
 class ZoneCoverage(BaseModel):
-    """Cobertura de sensores de una zona."""
+    """Sensor coverage of one zone."""
 
     zone_number: int | None
     bays: int
@@ -111,52 +111,52 @@ class ZoneCoverage(BaseModel):
 
 
 class ZonesResponse(BaseModel):
-    """Respuesta de `GET /zones/coverage`."""
+    """Response of `GET /zones/coverage`."""
 
     snapshot: SnapshotInfo
     zones_total: int
-    zones_without_data: int = Field(description="Zonas sin ni una lectura fiable")
+    zones_without_data: int = Field(description="Zones without a single reliable reading")
     zones: list[ZoneCoverage]
     attribution: str
 
 
 class HealthResponse(BaseModel):
-    """Respuesta de `GET /health`."""
+    """Response of `GET /health`."""
 
-    status: str = Field(description="ok, stale o no_data")
+    status: str = Field(description="ok, stale or no_data")
     detail: str
     snapshot: SnapshotInfo | None = None
 
 
 class ZonePrediction(BaseModel):
-    """Probabilidad de encontrar sitio en un tramo de calle."""
+    """Probability of finding a space in one street segment."""
 
-    segment_id: str = Field(description="CALLE|CRUCE_A|CRUCE_B, las dos delimitadoras ordenadas")
-    label: str = Field(description="El mismo tramo en texto legible")
+    segment_id: str = Field(description="STREET|CROSS_A|CROSS_B, the two bounds sorted")
+    label: str = Field(description="The same segment in readable text")
     probability: float = Field(
-        ge=0, le=1, description="P(al menos una plaza libre al llegar), calibrada"
+        ge=0, le=1, description="P(at least one free bay on arrival), calibrated"
     )
-    free_bays: int = Field(description="Plazas libres AHORA entre las fiables")
-    total_bays: int = Field(description="Plazas con lectura fiable en el tramo")
+    free_bays: int = Field(description="Free bays RIGHT NOW among the reliable ones")
+    total_bays: int = Field(description="Bays with a reliable reading in the segment")
     latitude: float
     longitude: float
-    distance_m: float = Field(description="Distancia desde el destino consultado")
+    distance_m: float = Field(description="Distance from the destination queried")
     is_interpolated: bool = Field(
-        description="True si el ultimo estado se arrastro de un lote anterior por un hueco"
+        description="True when the last state was carried over from an earlier batch across a gap"
     )
 
 
 class PredictResponse(BaseModel):
-    """Respuesta de `GET /predict`."""
+    """Response of `GET /predict`."""
 
     snapshot: SnapshotInfo
-    eta_minutes: float = Field(description="Lo que pidio el cliente")
+    eta_minutes: float = Field(description="What the client asked for")
     horizon_minutes: int = Field(
-        description="Horizonte realmente usado: se ajusta al modelo entrenado mas cercano"
+        description="Horizon actually used: snapped to the nearest trained model"
     )
     zones: list[ZonePrediction] = Field(
-        description="Tramos cercanos ordenados por distancia, no por probabilidad: "
-        "ordenarlos por probabilidad mandaria a todo el mundo al mismo sitio"
+        description="Nearby segments ordered by distance, not by probability: "
+        "ordering by probability would send everyone to the same spot"
     )
-    model_caveat: str = Field(description="Por que esto es una demostracion y no un servicio")
+    model_caveat: str = Field(description="Why this is a demonstration and not a service")
     attribution: str

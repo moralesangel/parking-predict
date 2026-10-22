@@ -1,1 +1,1 @@
-"""Paquete api (pendiente de implementar)."""
+"""HTTP API: live map, prediction and monitoring endpoints."""

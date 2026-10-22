@@ -1,17 +1,16 @@
-"""Backtest del modelo en producción contra lo que realmente pasó.
+"""Backtest of the production model against what actually happened.
 
-Es la pieza de monitorización que de verdad responde "¿sigue funcionando?".
-Las métricas de la Fase 5 se midieron sobre 2019; esto las vuelve a medir sobre
-los datos que el poller va acumulando, que es el único sitio donde el modelo se
-enfrenta al presente.
+This is the monitoring piece that really answers "is it still working?". The
+phase 5 metrics were measured on 2019; this measures them again on the data the
+poller keeps accumulating, which is the only place the model meets the present.
 
-Funciona porque **la etiqueta llega sola**: la predicción hecha en `t` para
-`t+h` se puede comprobar en cuanto el poller capture `t+h`. No hace falta
-anotar nada a mano, solo esperar `h` minutos.
+It works because **the label arrives on its own**: the prediction made at `t`
+for `t+h` can be checked as soon as the poller captures `t+h`. Nothing has to
+be annotated by hand, only `h` minutes waited.
 
-Se compara siempre contra la persistencia calculada sobre los mismos datos. Un
-Brier de 0,03 no significa nada por sí solo; lo que importa es si sigue por
-debajo de la referencia que habría costado cero esfuerzo.
+It is always compared against persistence computed on the same data. A Brier of
+0.03 means nothing by itself; what matters is whether it is still below the
+reference that would have cost zero effort.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from parking.models.evaluation import brier_score, log_loss, skill_score
 
 @dataclass(frozen=True)
 class BacktestResult:
-    """Métricas del modelo frente a la persistencia sobre datos ya realizados."""
+    """Model metrics against persistence over already-realised data."""
 
     horizon_minutes: int
     n: int
@@ -41,10 +40,10 @@ class BacktestResult:
 
     @property
     def is_degraded(self) -> bool:
-        """True si el modelo ya no bate a la persistencia.
+        """True when the model no longer beats persistence.
 
-        Es la alarma que importa: el momento en que el pipeline de ML deja de
-        pagar lo que cuesta.
+        This is the alarm that matters: the moment the ML pipeline stops paying
+        for itself.
         """
         return self.model_brier >= self.persistence_brier
 
@@ -64,11 +63,11 @@ class BacktestResult:
 def realised_targets(
     features: pl.DataFrame, horizon_minutes: int, *, grid_minutes: int = 5
 ) -> pl.DataFrame:
-    """Añade el objetivo observado: ¿había sitio `h` minutos después?
+    """Add the observed target: was there space `h` minutes later?
 
-    Es exactamente `dataset.add_targets`, pero aplicado a la serie en vivo y a
-    posteriori. Las filas cuyo `t+h` todavía no ha ocurrido quedan con objetivo
-    nulo y se descartan al evaluar: son el futuro, no un dato que falte.
+    This is exactly `dataset.add_targets`, applied to the live series after the
+    fact. Rows whose `t+h` has not happened yet keep a null target and are
+    dropped at evaluation time: they are the future, not missing data.
     """
     steps = horizon_minutes // grid_minutes
     return features.sort("segment_id", "timestamp").with_columns(
@@ -85,18 +84,18 @@ def backtest(
     grid_minutes: int = 5,
     exclude_interpolated: bool = True,
 ) -> BacktestResult | None:
-    """Evalúa unas predicciones contra lo que realmente ocurrió.
+    """Evaluate predictions against what actually happened.
 
-    `features` debe ser la serie completa (no solo la última fila por tramo) y
-    `probabilities` las predicciones alineadas con ella.
+    `features` must be the full series (not just the last row per segment) and
+    `probabilities` the predictions aligned with it.
 
-    `exclude_interpolated` descarta las filas que el relleno de huecos inventó.
-    Evaluar sobre ellas mediría la calidad del relleno, no la del modelo: una
-    fila arrastrada del instante anterior hace que la persistencia parezca
-    perfecta y que el modelo parezca peor de lo que es.
+    `exclude_interpolated` drops the rows the gap-filling invented. Evaluating
+    on them would measure the quality of the filling rather than the model: a
+    row carried over from the previous instant makes persistence look perfect
+    and the model look worse than it is.
 
-    Devuelve `None` si no queda nada evaluable, en lugar de métricas sobre cero
-    filas.
+    Returns `None` when nothing evaluable is left, rather than metrics over
+    zero rows.
     """
     frame = features.with_columns(probability=pl.Series(probabilities))
     frame = realised_targets(frame, horizon_minutes, grid_minutes=grid_minutes)
@@ -121,12 +120,12 @@ def backtest(
 
 
 def coverage_trend(series: pl.DataFrame, *, bucket: str = "1h") -> pl.DataFrame:
-    """Cobertura de sensores a lo largo del tiempo.
+    """Sensor coverage over time.
 
-    Es la tercera señal que pide el plan y la más fácil de pasar por alto: un
-    modelo puede seguir perfecto mientras la mitad de los sensores se apagan,
-    porque las métricas se calculan sobre lo que queda. La cobertura cayendo
-    significa que el producto cubre menos ciudad, aunque acierte igual.
+    This is the third signal the plan asks for and the easiest to overlook: a
+    model can look perfect while half the sensors go dark, because the metrics
+    are computed over whatever is left. Falling coverage means the product
+    covers less of the city, even if it is just as accurate.
     """
     if series.is_empty():
         return series

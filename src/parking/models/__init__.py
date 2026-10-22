@@ -1,1 +1,1 @@
-"""Paquete models (pendiente de implementar)."""
+"""Baselines, gradient boosting, evaluation and the model registry."""

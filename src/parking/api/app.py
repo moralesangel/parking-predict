@@ -1,15 +1,15 @@
-"""API del mapa en tiempo real.
+"""Real-time map API.
 
-Sirve el último snapshot que capturó el poller, nunca consulta la fuente
-directamente. Tres endpoints:
+Serves the latest snapshot the poller captured; it never queries the source
+directly. Endpoints:
 
-- `GET /bays/live`        estado de cada plaza con su bandera de fiabilidad
-- `GET /predict`          probabilidad de encontrar sitio al llegar, por zona
-- `GET /zones/coverage`   cobertura por zona, para saber dónde no hay datos
-- `GET /health`           si los datos que sirve están frescos
-- `GET /monitoring`       último informe de operación (degradación, drift, cobertura)
+- `GET /bays/live`        state of every bay with its reliability flag
+- `GET /predict`          probability of finding a space on arrival, per zone
+- `GET /zones/coverage`   coverage per zone, to know where there is no data
+- `GET /health`           whether the data being served is fresh
+- `GET /monitoring`       latest operations report (degradation, drift, coverage)
 
-Además monta el frontend estático en `/`.
+It also mounts the static frontend at `/`.
 """
 
 from __future__ import annotations
@@ -49,35 +49,36 @@ from parking.quality.coverage import coverage_by_zone
 logger = logging.getLogger(__name__)
 
 ATTRIBUTION = (
-    "Datos de City of Melbourne Open Data (https://data.melbourne.vic.gov.au/), licencia CC BY 4.0."
+    "Data from City of Melbourne Open Data (https://data.melbourne.vic.gov.au/), "
+    "licensed CC BY 4.0."
 )
 
-#: Un lote más viejo que esto sugiere que el poller no está escribiendo. Son 10
-#: ciclos del feed (120 s): tolera varios fallos de red seguidos, que el poller
-#: registra y omite sin morir, pero no una caída prolongada.
+#: A batch older than this suggests the poller has stopped writing. It is 10
+#: feed cycles (120 s): tolerant of several consecutive network failures, which
+#: the poller logs and skips without dying, but not of a prolonged outage.
 STALE_AFTER_SECONDS = 1200.0
 
 
 def get_repository(request: Request) -> SnapshotRepository:
-    """Repositorio compartido, guardado en el estado de la aplicación."""
+    """Shared repository, kept on the application state."""
     return request.app.state.repository
 
 
 def get_predictor(request: Request) -> PredictionService:
-    """Servicio de predicción compartido, con su caché de features."""
+    """Shared prediction service, with its feature cache."""
     return request.app.state.predictor
 
 
-# A nivel de módulo a propósito: con `from __future__ import annotations` las
-# anotaciones son cadenas y FastAPI las resuelve contra los globales del módulo.
-# Definido dentro de `create_app` sería invisible para él y las rutas pedirían
-# `repository` como parámetro de query.
+# At module level on purpose: with `from __future__ import annotations` the
+# annotations are strings and FastAPI resolves them against the module globals.
+# Defined inside `create_app` they would be invisible to FastAPI and the routes
+# would ask for `repository` as a query parameter.
 RepositoryDep = Annotated[SnapshotRepository, Depends(get_repository)]
 PredictorDep = Annotated[PredictionService, Depends(get_predictor)]
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """Construye la aplicación. Recibe `settings` para poder testearla aislada."""
+    """Build the application. Takes `settings` so it can be tested in isolation."""
     settings = settings or get_settings()
     repository = SnapshotRepository(settings)
 
@@ -85,8 +86,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="Parking Predict API",
         version="0.1.0",
         description=(
-            "Ocupación de aparcamiento en calle en Melbourne. "
-            "Fase 3: estado en tiempo real, sin predicción todavía.\n\n"
+            "On-street parking occupancy in Melbourne, with arrival-time "
+            "prediction.\n\n"
             f"{ATTRIBUTION}"
         ),
     )
@@ -107,19 +108,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return repository.load()
         except NoSnapshotError as exc:
-            # 503 y no 404: el recurso existe conceptualmente, lo que falta es
-            # que el poller haya producido datos. Es un problema operativo.
+            # 503 rather than 404: the resource exists conceptually, what is
+            # missing is for the poller to have produced data. Operational.
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    @app.get("/bays/live", response_model=LiveResponse, tags=["tiempo real"])
+    @app.get("/bays/live", response_model=LiveResponse, tags=["real time"])
     def bays_live(
         repository: RepositoryDep,
         reliable_only: Annotated[
             bool,
             Query(
-                description="Si es true, omite las plazas sin lectura fiable. "
-                "Por defecto se devuelven TODAS, porque el mapa necesita "
-                "pintar 'sin dato' como un estado propio."
+                description="When true, omit bays without a reliable reading. "
+                "By default ALL bays are returned, because the map needs to "
+                "paint 'no data' as a state of its own."
             ),
         ] = False,
     ) -> LiveResponse:
@@ -160,29 +161,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             attribution=ATTRIBUTION,
         )
 
-    @app.get("/predict", response_model=PredictResponse, tags=["prediccion"])
+    @app.get("/predict", response_model=PredictResponse, tags=["prediction"])
     def predict(
         repository: RepositoryDep,
         predictor: PredictorDep,
-        lat: Annotated[float, Query(ge=-90, le=90, description="Latitud del destino")],
-        lon: Annotated[float, Query(ge=-180, le=180, description="Longitud del destino")],
+        lat: Annotated[float, Query(ge=-90, le=90, description="Destination latitude")],
+        lon: Annotated[float, Query(ge=-180, le=180, description="Destination longitude")],
         eta_minutes: Annotated[
             float,
             Query(
                 ge=0,
                 le=120,
-                description="Minutos hasta la llegada. Se ajusta al horizonte "
-                "entrenado mas cercano (5, 10, 15 o 30).",
+                description="Minutes until arrival. Snapped to the nearest "
+                "trained horizon (5, 10, 15 or 30).",
             ),
         ] = 15,
         radius_m: Annotated[float, Query(ge=50, le=3000)] = 500,
         limit: Annotated[int, Query(ge=1, le=50)] = 10,
     ) -> PredictResponse:
-        """Probabilidad de encontrar plaza en las zonas cercanas al destino.
+        """Probability of finding a space in the zones near the destination.
 
-        Devuelve **varias zonas y no la mejor**: señalar una sola mandaría a
-        todo el que pregunte al mismo hueco. Van ordenadas por distancia, no
-        por probabilidad, por la misma razón.
+        Returns **several zones rather than the best one**: pointing at a
+        single spot would send everyone who asks to the same place. They are
+        ordered by distance, not by probability, for the same reason.
         """
         snapshot = _load(repository)
         try:
@@ -214,10 +215,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             attribution=ATTRIBUTION,
         )
 
-    @app.get("/zones/coverage", response_model=ZonesResponse, tags=["calidad"])
+    @app.get("/zones/coverage", response_model=ZonesResponse, tags=["quality"])
     def zones_coverage(
         repository: RepositoryDep,
-        min_bays: Annotated[int, Query(ge=1, description="Omite zonas más pequeñas")] = 1,
+        min_bays: Annotated[int, Query(ge=1, description="Skip smaller zones")] = 1,
     ) -> ZonesResponse:
         snapshot = _load(repository)
         coverage = coverage_by_zone(snapshot.frame, min_bays=min_bays)
@@ -241,20 +242,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             attribution=ATTRIBUTION,
         )
 
-    @app.get("/monitoring", tags=["operación"])
+    @app.get("/monitoring", tags=["operations"])
     def monitoring() -> dict:
-        """Último informe de monitorización, tal como lo dejó `scripts/monitor.py`.
+        """Latest monitoring report, exactly as `scripts/monitor.py` left it.
 
-        La API **no lo recalcula**: hacerlo recorrería toda la serie acumulada
-        en una petición HTTP. El informe lo produce el job programado y esto
-        solo lo sirve, así que incluye `generated_at` para que se vea si el job
-        ha dejado de correr.
+        The API **does not recompute it**: doing so would walk the whole
+        accumulated series inside an HTTP request. The scheduled job produces
+        the report and this only serves it, so `generated_at` is included to
+        make it visible when the job has stopped running.
         """
         path = settings.processed_dir / "monitoring" / "report.json"
         if not path.exists():
             raise HTTPException(
                 status_code=503,
-                detail=f"no hay informe en {path}; ejecuta scripts/monitor.py",
+                detail=f"no report at {path}; run scripts/monitor.py",
             )
         report = json.loads(path.read_text(encoding="utf-8"))
         generated = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.UTC)
@@ -262,19 +263,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "generated_at": generated.isoformat(),
             "age_seconds": round(age, 1),
-            # Un informe de monitorizacion viejo es, en si mismo, un sintoma:
-            # significa que el job programado no esta corriendo.
+            # A stale monitoring report is itself a symptom: it means the
+            # scheduled job is not running.
             "is_stale": age > 24 * 3600,
             **report,
         }
 
-    @app.get("/health", response_model=HealthResponse, tags=["operación"])
+    @app.get("/health", response_model=HealthResponse, tags=["operations"])
     def health(repository: RepositoryDep) -> HealthResponse:
-        """Estado de la API. Nunca devuelve error: informa.
+        """API status. Never returns an error: it reports.
 
-        Un 200 con `status: "stale"` es más útil que un 503 para un panel de
-        monitorización, que necesita distinguir "la API está caída" de "la API
-        está viva pero los datos no avanzan".
+        A 200 with `status: "stale"` is more useful than a 503 for a monitoring
+        dashboard, which needs to tell "the API is down" apart from "the API is
+        alive but the data has stopped moving".
         """
         try:
             snapshot = repository.load()
@@ -286,41 +287,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return HealthResponse(
                 status="stale",
                 detail=(
-                    f"el último lote tiene {info.age_seconds:.0f} s "
-                    f"(umbral {STALE_AFTER_SECONDS:.0f} s); revisa el poller"
+                    f"the latest batch is {info.age_seconds:.0f} s old "
+                    f"(threshold {STALE_AFTER_SECONDS:.0f} s); check the poller"
                 ),
                 snapshot=info,
             )
         return HealthResponse(
-            status="ok", detail=f"lote de hace {info.age_seconds:.0f} s", snapshot=info
+            status="ok", detail=f"batch from {info.age_seconds:.0f} s ago", snapshot=info
         )
 
     if settings.web_dir.is_dir():
-        # html=True sirve index.html en la raíz. El montaje va al final para que
-        # no tape las rutas de la API, que se registraron antes.
+        # html=True serves index.html at the root. The mount goes last so it
+        # does not shadow the API routes, which were registered above.
         app.mount("/", StaticFiles(directory=settings.web_dir, html=True), name="web")
-    else:  # pragma: no cover - solo si falta el directorio en el despliegue
-        # No se monta nada: las rutas de la API siguen funcionando y `/` da 404,
-        # que es más honesto que servir una página vacía.
-        logger.warning("no existe %s; el frontend no se sirve", settings.web_dir)
+    else:  # pragma: no cover - only when the directory is missing in a deployment
+        # Nothing is mounted: the API routes keep working and `/` returns 404,
+        # which is more honest than serving an empty page.
+        logger.warning("%s does not exist; the frontend is not served", settings.web_dir)
 
     return app
 
 
 def _segment_label(segment_id: str) -> str:
-    """`COLLINS STREET|EXHIBITION STREET|RUSSELL STREET` -> texto legible."""
+    """`COLLINS STREET|EXHIBITION STREET|RUSSELL STREET` -> readable text."""
     parts = segment_id.split("|")
     if len(parts) != 3:
         return segment_id
     street, first, second = (part.title() for part in parts)
-    return f"{street}, entre {first} y {second}"
+    return f"{street}, between {first} and {second}"
 
 
 def _bay_state(is_reliable: bool, is_occupied: bool) -> BayState:
-    """Estado para el mapa.
+    """State for the map.
 
-    Sin lectura fiable el estado es `unknown`, nunca `free`: una plaza cuyo
-    sensor lleva meses congelado puede estar ocupada ahora mismo.
+    Without a reliable reading the state is `unknown`, never `free`: a bay
+    whose sensor has been frozen for months may well be occupied right now.
     """
     if not is_reliable:
         return BayState.UNKNOWN
@@ -328,10 +329,10 @@ def _bay_state(is_reliable: bool, is_occupied: bool) -> BayState:
 
 
 def _build_summary(frame: pl.DataFrame) -> Summary:
-    """Resumen calculado siempre sobre el frame completo.
+    """Summary always computed over the complete frame.
 
-    Se construye antes de cualquier filtrado para que `coverage_pct` siga
-    significando lo mismo cuando el cliente pide `reliable_only=true`.
+    Built before any filtering so that `coverage_pct` keeps meaning the same
+    thing when the client asks for `reliable_only=true`.
     """
     total = frame.height
     reliable = frame.filter(pl.col("is_reliable"))
@@ -353,14 +354,14 @@ def _build_summary(frame: pl.DataFrame) -> Summary:
     )
 
 
-def main() -> None:  # pragma: no cover - punto de entrada
-    """Arranca uvicorn. Para desarrollo; en Docker lo lanza el ENTRYPOINT."""
+def main() -> None:  # pragma: no cover - entry point
+    """Start uvicorn. For development; in Docker the CMD launches it."""
     import time
 
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s")
-    # UTC en los logs, igual que en el poller: los datos están en UTC.
+    # UTC in the logs, same as the poller: the data is in UTC.
     logging.Formatter.converter = time.gmtime
     uvicorn.run(create_app(), host="0.0.0.0", port=8000)
 

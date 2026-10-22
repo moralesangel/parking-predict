@@ -1,23 +1,24 @@
-"""Registro de modelos: versiones, promoción y rechazo.
+"""Model registry: versions, promotion and rejection.
 
-El reentrenamiento automático tiene un riesgo que el despliegue manual no tiene:
-nadie mira el resultado antes de que llegue a producción. Si un mes de datos
-sale malo —una caída larga del feed, una obra que vacía media ciudad— el modelo
-reentrenado puede ser peor que el que ya había, y peor que no predecir nada.
+Automated retraining carries a risk that manual deployment does not: nobody
+looks at the result before it reaches production. If a month of data turns out
+bad - a long feed outage, roadworks emptying half the city - the retrained
+model can be worse than the one already deployed, and worse than not predicting
+at all.
 
-Por eso un modelo **nunca se promociona por el hecho de haberse entrenado**.
-Tiene que pasar dos pruebas sobre un holdout temporal:
+That is why a model is **never promoted merely for having been trained**. It
+has to pass two tests on a temporal holdout:
 
-1. **Batir a la persistencia.** Es la conclusión directa de la Fase 5: la
-   persistencia calibrada es durísima, y un modelo que no la supera no aporta
-   nada que no estuviera ya en el estado actual. Desplegarlo añadiría un
-   pipeline de ML entero a cambio de nada.
-2. **No empeorar respecto al modelo en producción**, más allá de un margen de
-   tolerancia. Reentrenar no debe ser un paso atrás.
+1. **Beat persistence.** This follows directly from phase 5: calibrated
+   persistence is brutally strong, and a model that cannot beat it adds nothing
+   that was not already in the current state. Deploying it would add an entire
+   ML pipeline in exchange for nothing.
+2. **Not regress against the model in production**, beyond a tolerance margin.
+   Retraining must not be a step backwards.
 
-Si falla cualquiera de las dos, el candidato se archiva con el motivo y el
-modelo en producción se queda donde está. Un reentrenamiento que no promociona
-es un resultado correcto, no un fallo del job.
+If either test fails, the candidate is archived with the reason and the
+production model stays put. A retraining run that does not promote is a correct
+outcome, not a job failure.
 """
 
 from __future__ import annotations
@@ -31,16 +32,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-#: Margen por el que un candidato puede ser peor que producción sin que se le
-#: rechace. Un 2 % absorbe el ruido de evaluar sobre un holdout finito; sin
-#: margen, el modelo cambiaría cada semana por diferencias que no significan
-#: nada.
+#: How much worse than production a candidate may be without being rejected. 2%
+#: absorbs the noise of evaluating on a finite holdout; without a margin the
+#: model would change every week over differences that mean nothing.
 REGRESSION_TOLERANCE = 0.02
 
 
 @dataclass(frozen=True)
 class PromotionDecision:
-    """Resultado de evaluar un candidato."""
+    """Outcome of evaluating a candidate."""
 
     promoted: bool
     reason: str
@@ -63,18 +63,18 @@ def decide(
     *,
     tolerance: float = REGRESSION_TOLERANCE,
 ) -> PromotionDecision:
-    """Decide si un candidato merece sustituir al modelo en producción.
+    """Decide whether a candidate deserves to replace the production model.
 
-    `production_brier` es `None` la primera vez, cuando todavía no hay nada
-    desplegado: entonces basta con batir a la persistencia.
+    `production_brier` is `None` the first time, when nothing is deployed yet:
+    then beating persistence is enough.
     """
     if not candidate_brier < persistence_brier:
         return PromotionDecision(
             promoted=False,
             reason=(
-                f"no bate a la persistencia (candidato {candidate_brier:.5f} "
-                f">= persistencia {persistence_brier:.5f}); desplegarlo anadiria "
-                "un pipeline de ML a cambio de nada"
+                f"does not beat persistence (candidate {candidate_brier:.5f} "
+                f">= persistence {persistence_brier:.5f}); deploying it would add "
+                "an ML pipeline in exchange for nothing"
             ),
             candidate_brier=candidate_brier,
             persistence_brier=persistence_brier,
@@ -87,8 +87,8 @@ def decide(
             return PromotionDecision(
                 promoted=False,
                 reason=(
-                    f"empeora respecto a produccion mas alla del margen "
-                    f"(candidato {candidate_brier:.5f} > limite {limit:.5f})"
+                    f"regresses against production beyond the margin "
+                    f"(candidate {candidate_brier:.5f} > limit {limit:.5f})"
                 ),
                 candidate_brier=candidate_brier,
                 persistence_brier=persistence_brier,
@@ -96,13 +96,13 @@ def decide(
             )
 
     improvement = (
-        "primer modelo desplegado"
+        "first model deployed"
         if production_brier is None
-        else f"mejora un {(1 - candidate_brier / production_brier) * 100:.1f}% sobre produccion"
+        else f"improves on production by {(1 - candidate_brier / production_brier) * 100:.1f}%"
     )
     return PromotionDecision(
         promoted=True,
-        reason=f"bate a la persistencia y {improvement}",
+        reason=f"beats persistence and {improvement}",
         candidate_brier=candidate_brier,
         persistence_brier=persistence_brier,
         production_brier=production_brier,
@@ -110,19 +110,19 @@ def decide(
 
 
 class ModelRegistry:
-    """Modelos versionados en disco, con un puntero a producción.
+    """Versioned models on disk, with a pointer to production.
 
-    Estructura::
+    Layout::
 
         models/
-          production/          <- lo que sirve la API
+          production/          <- what the API serves
           versions/2026-10-22T18-30-00/
-          history.jsonl        <- una linea por decision, promocionada o no
+          history.jsonl        <- one line per decision, promoted or not
 
-    El histórico guarda **también los rechazos**. Saber que el modelo lleva
-    cinco semanas sin promocionar porque no bate a la persistencia es
-    información operativa de primer orden, y borrarla dejaría el registro
-    contando solo las victorias.
+    The history keeps **rejections too**. Knowing the model has gone five weeks
+    without promoting because it cannot beat persistence is first-order
+    operational information, and discarding it would leave the registry
+    recording only the wins.
     """
 
     def __init__(self, root: Path) -> None:
@@ -132,7 +132,7 @@ class ModelRegistry:
         self.history_path = root / "history.jsonl"
 
     def production_metrics(self) -> dict | None:
-        """Métricas con las que se promocionó el modelo actual, si lo hay."""
+        """Metrics the current production model was promoted with, if any."""
         path = self.production_dir / "metrics.json"
         if not path.exists():
             return None
@@ -141,7 +141,7 @@ class ModelRegistry:
     def record(
         self, decision: PromotionDecision, *, version: str, extra: dict | None = None
     ) -> None:
-        """Añade una línea al histórico, promocionara o no."""
+        """Append one line to the history, whether it promoted or not."""
         self.root.mkdir(parents=True, exist_ok=True)
         entry = {
             "recorded_at": dt.datetime.now(dt.UTC).isoformat(),
@@ -153,7 +153,7 @@ class ModelRegistry:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def history(self) -> list[dict]:
-        """Todas las decisiones, de la más antigua a la más reciente."""
+        """Every decision, oldest first."""
         if not self.history_path.exists():
             return []
         return [
@@ -163,10 +163,11 @@ class ModelRegistry:
         ]
 
     def promote(self, candidate_dir: Path, *, version: str, metrics: dict) -> Path:
-        """Archiva el candidato y lo apunta como producción.
+        """Archive the candidate and point production at it.
 
-        El candidato se copia a `versions/<version>/` **antes** de tocar
-        producción, para que un fallo a mitad no deje producción vacía.
+        The candidate is copied into `versions/<version>/` **before** production
+        is touched, so a failure halfway through does not leave production
+        empty.
         """
         archived = self.versions_dir / version
         if archived.exists():
@@ -185,5 +186,5 @@ class ModelRegistry:
             shutil.rmtree(self.production_dir)
         staging.replace(self.production_dir)
 
-        logger.info("promocionado %s a produccion", version)
+        logger.info("promoted %s to production", version)
         return self.production_dir

@@ -1,8 +1,8 @@
-"""Deteccion de sensores caidos, atascados y huecos de red.
+"""Detection of offline sensors, stuck sensors and network gaps.
 
-Regla estructural: ninguna funcion de este paquete borra filas. Todas anaden
-columnas o devuelven informes agregados, para que la cobertura siga siendo
-medible (ver docs/data_quality.md).
+Structural rule: no function in this package drops rows. They all add columns
+or return aggregated reports, so that coverage stays measurable (see
+docs/data_quality.md).
 """
 
 from parking.quality.coverage import coverage_by_hour, coverage_by_zone, flapping_sensors

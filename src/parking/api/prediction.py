@@ -1,14 +1,14 @@
-"""Servicio de predicción: del snapshot más reciente a una probabilidad por zona.
+"""Prediction service: from the latest snapshot to a probability per zone.
 
-Encadena todo lo anterior: lee los snapshots del poller, los agrega por tramo,
-construye las mismas features con las que se entrenó el modelo y lo aplica.
+Chains everything before it: reads the poller's snapshots, aggregates them by
+segment, builds the same features the model was trained on, and applies it.
 
-**Advertencia que el endpoint devuelve en cada respuesta:** el modelo está
-entrenado con el histórico de 2019 y se aplica a datos de hoy. Las razones por
-las que eso no es apto para producción están en `docs/id_crosswalk.md` §5
-—deriva temporal y renovación del parque de sensores— y la consecuencia es que
-esta fase es una **demostración del flujo completo**, no un servicio fiable. La
-advertencia viaja en el JSON para que no se pierda por el camino.
+**Warning returned in every response:** the model is trained on the 2019
+archive and applied to today's data. Why that is not production-grade is
+documented in `docs/id_crosswalk.md` §5 - temporal drift and sensor fleet
+renewal - and the consequence is that this phase is a **demonstration of the
+full flow**, not a reliable service. The warning travels inside the JSON so it
+does not get lost along the way.
 """
 
 from __future__ import annotations
@@ -37,26 +37,26 @@ from parking.quality.gaps import load_series
 
 logger = logging.getLogger(__name__)
 
-#: Horizontes con modelo entrenado. Un ETA cualquiera se ajusta al más cercano.
+#: Horizons with a trained model. An arbitrary ETA snaps to the nearest one.
 AVAILABLE_HORIZONS = (5, 10, 15, 30)
 
-#: Radio de la Tierra en metros, para la distancia haversine.
+#: Earth radius in metres, for the haversine distance.
 _EARTH_RADIUS_M = 6_371_000.0
 
 MODEL_CAVEAT = (
-    "Modelo entrenado con el histórico de 2019 y aplicado a datos actuales. "
-    "Es una demostración del flujo completo, no un servicio fiable: ver "
-    "docs/id_crosswalk.md §5."
+    "Model trained on the 2019 historical archive and applied to current data. "
+    "This is a demonstration of the full flow, not a reliable service: see "
+    "docs/id_crosswalk.md section 5."
 )
 
 
 class PredictionUnavailableError(RuntimeError):
-    """No se puede predecir: faltan modelos, geometría o historia suficiente."""
+    """Cannot predict: models, geometry or enough history are missing."""
 
 
 @dataclass(frozen=True)
 class SegmentPrediction:
-    """Probabilidad de encontrar sitio en un tramo."""
+    """Probability of finding a space in one segment."""
 
     segment_id: str
     probability: float
@@ -69,17 +69,17 @@ class SegmentPrediction:
 
 
 def snap_horizon(eta_minutes: float) -> int:
-    """Ajusta el ETA al horizonte entrenado más cercano.
+    """Snap the ETA to the nearest trained horizon.
 
-    Se ajusta en lugar de interpolar entre modelos: interpolar dos
-    probabilidades de modelos distintos produce un número que ningún modelo
-    predijo y cuya calibración no se ha medido.
+    It snaps rather than interpolating between models: interpolating two
+    probabilities from different models produces a number no model predicted
+    and whose calibration has never been measured.
     """
     return min(AVAILABLE_HORIZONS, key=lambda h: abs(h - eta_minutes))
 
 
 def haversine_m(lat1: float, lon1: float, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
-    """Distancia en metros sobre la esfera. Vectorizada sobre el segundo punto."""
+    """Great-circle distance in metres. Vectorised over the second point."""
     phi1, phi2 = math.radians(lat1), np.radians(lat2)
     delta_phi = phi2 - phi1
     delta_lambda = np.radians(lon2 - lon1)
@@ -88,10 +88,11 @@ def haversine_m(lat1: float, lon1: float, lat2: np.ndarray, lon2: np.ndarray) ->
 
 
 class PredictionService:
-    """Calcula y cachea las features en vivo, y aplica los modelos.
+    """Computes and caches the live features, and applies the models.
 
-    La caché se invalida por el sello del último lote: construir las features
-    recorre toda la serie acumulada, y hacerlo en cada petición no escalaría.
+    The cache is invalidated by the latest batch stamp: building the features
+    walks the whole accumulated series, and doing that per request would not
+    scale.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -102,7 +103,7 @@ class PredictionService:
         self._cached_batch: dt.datetime | None = None
         self._cached_features: pl.DataFrame | None = None
 
-    # --- recursos cargados una vez ---
+    # --- resources loaded once ---
 
     @property
     def _reference_path(self) -> Path:
@@ -112,10 +113,10 @@ class PredictionService:
         if self._bay_segments is None:
             if not self._reference_path.exists():
                 raise PredictionUnavailableError(
-                    f"falta {self._reference_path}; ejecuta scripts/fetch_reference.py"
+                    f"missing {self._reference_path}; run scripts/fetch_reference.py"
                 )
             self._bay_segments = load_bay_segments(self._reference_path)
-            logger.info("mapa kerbsideid->tramo: %d plazas", len(self._bay_segments))
+            logger.info("kerbsideid->segment map: %d bays", len(self._bay_segments))
         return self._bay_segments
 
     def centroids(self) -> pl.DataFrame:
@@ -129,23 +130,23 @@ class PredictionService:
             name = f"lightgbm_h{horizon}"
             if not (directory / f"{name}.txt").exists():
                 raise PredictionUnavailableError(
-                    f"falta el modelo {name}; ejecuta scripts/train_evaluate.py"
+                    f"missing model {name}; run scripts/train_evaluate.py"
                 )
             self._models[horizon] = GradientBoostingModel.load(directory, name)
         return self._models[horizon]
 
-    # --- features en vivo ---
+    # --- live features ---
 
     def features(self) -> pl.DataFrame:
-        """Última fila de features por tramo, cacheada por lote del feed."""
-        # La comprobación va ANTES de anotar: sobre un directorio vacío,
-        # `load_series` devuelve un frame sin columnas y `annotate_quality`
-        # fallaría con un error de esquema en vez de con este mensaje, que
-        # dice qué hacer.
+        """Last feature row per segment, cached by feed batch."""
+        # The check comes BEFORE annotating: over an empty directory
+        # `load_series` returns a frame with no columns and `annotate_quality`
+        # would fail with a schema error instead of this message, which says
+        # what to do.
         raw = load_series(self._settings.realtime_raw_dir)
         if raw.is_empty():
             raise PredictionUnavailableError(
-                "no hay snapshots; arranca el poller (python -m parking.ingest.poller)"
+                "no snapshots; start the poller (python -m parking.ingest.poller)"
             )
         series = annotate_quality(raw, stuck_after_hours=self._settings.stuck_after_hours)
 
@@ -156,16 +157,16 @@ class PredictionService:
         occupancy = segment_occupancy(series, self.bay_segments())
         if occupancy.is_empty():
             raise PredictionUnavailableError(
-                "ninguna plaza fiable se pudo asignar a un tramo de calle"
+                "no reliable bay could be assigned to a street segment"
             )
         features = latest_features(build_live_features(densify(occupancy)))
 
         self._cached_batch = batch
         self._cached_features = features
-        logger.info("features en vivo recalculadas: %d tramos (lote %s)", features.height, batch)
+        logger.info("live features rebuilt: %d segments (batch %s)", features.height, batch)
         return features
 
-    # --- predicción ---
+    # --- prediction ---
 
     def predict_near(
         self,
@@ -176,12 +177,12 @@ class PredictionService:
         radius_m: float = 500.0,
         limit: int = 10,
     ) -> tuple[int, list[SegmentPrediction]]:
-        """Tramos dentro de `radius_m`, con su probabilidad, del más cercano al más lejano.
+        """Segments within `radius_m` and their probability, nearest first.
 
-        Devolver **varios tramos y no solo el mejor** es deliberado: si el
-        producto señalara una única plaza libre, mandaría a todo el que
-        pregunte al mismo hueco. Una lista de zonas con su probabilidad reparte
-        y además refleja la incertidumbre real.
+        Returning **several segments rather than only the best one** is
+        deliberate: if the product pointed at a single free bay, it would send
+        everyone who asks to the same spot. A list of zones with their
+        probabilities spreads the load and reflects the real uncertainty.
         """
         horizon = snap_horizon(eta_minutes)
         features = self.features()
@@ -189,7 +190,7 @@ class PredictionService:
 
         located = features.join(centroids.drop("bays"), on="segment_id", how="inner")
         if located.is_empty():
-            raise PredictionUnavailableError("ningún tramo con features tiene coordenadas")
+            raise PredictionUnavailableError("no segment with features has coordinates")
 
         distances = haversine_m(
             latitude,
@@ -221,11 +222,11 @@ class PredictionService:
         ]
 
     def predict_all(self, eta_minutes: float) -> tuple[int, pl.DataFrame]:
-        """Probabilidad de todos los tramos, para pintar el mapa entero."""
+        """Probability for every segment, for painting the whole map."""
         horizon = snap_horizon(eta_minutes)
         features = self.features()
         located = features.join(self.centroids().drop("bays"), on="segment_id", how="inner")
         if located.is_empty():
-            raise PredictionUnavailableError("ningún tramo con features tiene coordenadas")
+            raise PredictionUnavailableError("no segment with features has coordinates")
         probabilities = self.model(horizon).predict_proba(located)
         return horizon, located.with_columns(probability=pl.Series(probabilities))

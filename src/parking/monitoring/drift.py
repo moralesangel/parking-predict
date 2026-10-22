@@ -1,25 +1,25 @@
-"""Detección de drift en la distribución de ocupación.
+"""Drift detection on the occupancy distribution.
 
-El modelo se entrenó con una distribución concreta. Si la de hoy se aleja, las
-probabilidades dejan de estar calibradas aunque el modelo siga ordenando bien,
-y en este producto la calibración **es** el entregable.
+The model was trained on a particular distribution. If today's drifts away, the
+probabilities stop being calibrated even when the model still ranks well, and
+in this product calibration **is** the deliverable.
 
-Se usa el **PSI** (Population Stability Index), que es el estándar operativo
-para esto: compara dos histogramas sobre los mismos cortes y resume la
-diferencia en un número.
+The metric is **PSI** (Population Stability Index), the operational standard
+for this: it compares two histograms over the same cut points and summarises
+the difference in one number.
 
-    PSI = suma_i (actual_i - referencia_i) * ln(actual_i / referencia_i)
+    PSI = sum_i (actual_i - reference_i) * ln(actual_i / reference_i)
 
-Umbrales habituales en la industria, que se adoptan aquí tal cual:
+Thresholds widely used in industry, adopted here as-is:
 
-| PSI | Lectura |
+| PSI | Reading |
 |---|---|
-| < 0,10 | estable |
-| 0,10 a 0,25 | cambio moderado, vigilar |
-| > 0,25 | cambio fuerte, revisar el modelo |
+| < 0.10 | stable |
+| 0.10 to 0.25 | moderate shift, keep watching |
+| > 0.25 | large shift, review the model |
 
-Son convención, no una verdad estadística: no hay un contraste de hipótesis
-detrás. Sirven para disparar una revisión, no para concluir nada por sí solos.
+They are convention, not statistical truth: there is no hypothesis test behind
+them. They exist to trigger a review, not to conclude anything on their own.
 """
 
 from __future__ import annotations
@@ -29,21 +29,21 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
-#: Cortes del histograma de ocupación. Fijos y no cuantiles de la muestra
-#: actual: con cortes móviles, dos distribuciones distintas podrían dar PSI
-#: cero porque cada una define sus propios tramos.
+#: Occupancy histogram cut points. Fixed rather than quantiles of the current
+#: sample: with moving cuts, two genuinely different distributions could score
+#: PSI zero because each one defines its own bands.
 OCCUPANCY_BINS = (0.0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 0.95, 1.0001)
 
 STABLE_BELOW = 0.10
 INVESTIGATE_ABOVE = 0.25
 
-#: Evita el log de cero cuando un tramo queda vacío en una de las dos muestras.
+#: Avoids log(0) when a band comes out empty in one of the two samples.
 _EPSILON = 1e-6
 
 
 @dataclass(frozen=True)
 class DriftResult:
-    """Comparación de dos distribuciones."""
+    """Comparison of two distributions."""
 
     psi: float
     reference_n: int
@@ -53,10 +53,10 @@ class DriftResult:
     @property
     def level(self) -> str:
         if self.psi < STABLE_BELOW:
-            return "estable"
+            return "stable"
         if self.psi < INVESTIGATE_ABOVE:
-            return "moderado"
-        return "fuerte"
+            return "moderate"
+        return "large"
 
     @property
     def needs_attention(self) -> bool:
@@ -77,10 +77,10 @@ def population_stability_index(
     *,
     bins: tuple[float, ...] = OCCUPANCY_BINS,
 ) -> DriftResult:
-    """PSI entre una muestra de referencia y una actual.
+    """PSI between a reference sample and a current one.
 
-    `reference` suele ser la distribución de entrenamiento y `current` la de la
-    ventana reciente.
+    `reference` is usually the training distribution and `current` the recent
+    window.
     """
     reference = np.asarray(reference, dtype=float)
     current = np.asarray(current, dtype=float)
@@ -114,16 +114,16 @@ def occupancy_drift(
     *,
     column: str = "occupancy_rate",
 ) -> DriftResult:
-    """Drift de la tasa de ocupación entre dos conjuntos.
+    """Drift of the occupancy rate between two datasets.
 
-    Se compara la **ocupación** y no la variable objetivo porque es la señal que
-    domina el modelo: el 90 % de la ganancia sale del estado actual y su media
-    reciente (ver `docs/results.md` §5). Si esa distribución se mueve, el modelo
-    se ha quedado sin suelo.
+    **Occupancy** is compared rather than the target because it is the signal
+    that dominates the model: 90% of the gain comes from the current state and
+    its recent mean (see `docs/results.md` §5). If that distribution moves, the
+    model has lost its footing.
     """
-    for frame, name in ((reference, "referencia"), (current, "actual")):
+    for frame, name in ((reference, "reference"), (current, "current")):
         if column not in frame.columns:
-            raise ValueError(f"falta la columna {column!r} en el conjunto de {name}")
+            raise ValueError(f"missing column {column!r} in the {name} dataset")
     return population_stability_index(
         reference[column].drop_nulls().to_numpy(),
         current[column].drop_nulls().to_numpy(),

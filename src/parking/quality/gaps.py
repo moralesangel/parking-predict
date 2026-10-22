@@ -1,20 +1,21 @@
-"""Detección de huecos en la serie de snapshots.
+"""Detection of gaps in the snapshot series.
 
-El feed publica un lote cada 120 s. Un salto mayor entre dos lotes consecutivos
-significa que faltan datos, y hay que saberlo antes de calcular lags o
-tendencias: una feature de "cambio en los últimos 10 min" calculada sobre un
-hueco de 2 h no es una tendencia, es ruido.
+The feed publishes a batch every 120 s. A longer jump between two consecutive
+batches means data is missing, and that has to be known before computing lags
+or trends: a "change over the last 10 minutes" feature computed across a
+two-hour gap is not a trend, it is noise.
 
-Importa distinguir la causa, porque se arreglan de forma distinta:
+Telling the two causes apart matters, because they are fixed differently:
 
-- **El poller no capturó** (caído, sin red, reiniciado). Se corrige operando.
-- **La fuente no publicó** nuevos lotes. No se puede corregir; hay que marcar
-  el periodo como no observado.
+- **The poller did not capture** (crashed, lost network, restarted). Fixed by
+  operating it.
+- **The source did not publish** new batches. Cannot be fixed; the period has
+  to be marked as unobserved.
 
-Ambas se ven igual en los snapshots guardados, pero la segunda deja rastro: si
-el poller siguió corriendo y pidiendo, el lote repetido se descartó por
-idempotencia y no hay fichero. Distinguirlas de forma automática requiere los
-logs del poller, así que este módulo reporta el hueco sin atribuir causa.
+Both look identical in the stored snapshots, but the second leaves a trace: if
+the poller kept running and requesting, the repeated batch was discarded by
+idempotency and no file exists. Separating them automatically would need the
+poller's logs, so this module reports the gap without attributing a cause.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ import polars as pl
 
 @dataclass(frozen=True)
 class Gap:
-    """Hueco entre dos lotes consecutivos."""
+    """A gap between two consecutive batches."""
 
     previous: dt.datetime
     following: dt.datetime
@@ -41,11 +42,11 @@ class Gap:
 
 
 def snapshot_timestamps(realtime_dir: Path) -> list[dt.datetime]:
-    """Sellos de lote de los snapshots en disco, ordenados.
+    """Batch stamps of the snapshots on disk, sorted.
 
-    Se leen del nombre del fichero y no del contenido: con miles de snapshots,
-    abrir cada Parquet para sacar una fecha que ya está en la ruta es un gasto
-    innecesario. El nombre es `snapshot_YYYYMMDDTHHMMSSZ.parquet`.
+    Read from the file name rather than the contents: with thousands of
+    snapshots, opening every Parquet to extract a date that is already in the
+    path is wasted work. The name is `snapshot_YYYYMMDDTHHMMSSZ.parquet`.
     """
     stamps: list[dt.datetime] = []
     for path in sorted(realtime_dir.rglob("snapshot_*.parquet")):
@@ -53,7 +54,7 @@ def snapshot_timestamps(realtime_dir: Path) -> list[dt.datetime]:
         try:
             stamps.append(dt.datetime.strptime(stem, "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.UTC))
         except ValueError:
-            continue  # fichero ajeno al patrón: se ignora, no se rompe el informe
+            continue  # foreign file: ignored rather than breaking the report
     return sorted(stamps)
 
 
@@ -63,11 +64,11 @@ def find_gaps(
     expected_interval_seconds: float = 120.0,
     tolerance_seconds: float = 360.0,
 ) -> list[Gap]:
-    """Huecos entre lotes consecutivos que superan `tolerance_seconds`.
+    """Gaps between consecutive batches longer than `tolerance_seconds`.
 
-    La tolerancia por defecto son 3 ciclos: el feed se retrasa de vez en cuando
-    sin que falte nada, y marcar cada retraso de un ciclo como hueco llenaría el
-    informe de falsos positivos.
+    The default tolerance is three cycles: the feed occasionally runs late
+    without anything being missing, and flagging every one-cycle delay as a gap
+    would fill the report with false positives.
     """
     gaps: list[Gap] = []
     for previous, following in itertools.pairwise(timestamps):
@@ -84,10 +85,11 @@ def continuity_report(
     expected_interval_seconds: float = 120.0,
     tolerance_seconds: float = 360.0,
 ) -> dict[str, object]:
-    """Resumen de continuidad de la serie capturada.
+    """Continuity summary of the captured series.
 
-    `completeness_pct` compara los lotes capturados con los que cabían en la
-    ventana observada. Es la cifra que dice si la serie sirve para entrenar.
+    `completeness_pct` compares captured batches against those that fit in the
+    observed window. It is the number that says whether the series is usable
+    for training.
     """
     if not timestamps:
         return {
@@ -118,11 +120,11 @@ def continuity_report(
 
 
 def load_series(realtime_dir: Path, *, columns: list[str] | None = None) -> pl.DataFrame:
-    """Carga todos los snapshots como un único frame.
+    """Load every snapshot as a single frame.
 
-    Usa `scan_parquet` sobre el glob para no materializar los ficheros uno a uno.
-    Devuelve un frame vacío con esquema si no hay nada que cargar, para que quien
-    llame no tenga que distinguir ese caso.
+    Uses `scan_parquet` over the glob so the files are not materialised one by
+    one. Returns an empty frame when there is nothing to load, so callers do
+    not have to special-case that.
     """
     paths = sorted(realtime_dir.rglob("snapshot_*.parquet"))
     if not paths:

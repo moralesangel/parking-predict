@@ -1,1 +1,1 @@
-"""Paquete features (pendiente de implementar)."""
+"""Spatial units, occupancy reconstruction and feature engineering."""

@@ -1,12 +1,12 @@
-"""Cruce entre el histórico de sensores y los datasets actuales.
+"""Crosswalk between the historical sensor archive and the current datasets.
 
-El histórico no comparte identificador con el tiempo real y no trae
-coordenadas, así que no hay cruce posible a nivel de plaza. Sí lo hay a nivel de
-**tramo de calle**, por el nombre de la calle y las dos calles que lo delimitan:
-cubre el 88 % de los eventos del histórico. El informe completo con las
-mediciones está en `docs/id_crosswalk.md`.
+The historical archive shares no identifier with the real-time feed and carries
+no coordinates, so there is no way to join them at bay level. There is one at
+**street segment** level, using the street name and the two cross streets that
+bound it: it covers 88% of the historical events. The full report with the
+measurements lives in `docs/id_crosswalk.md`.
 
-Este módulo implementa la clave de tramo que hace posible ese cruce.
+This module implements the segment key that makes that join possible.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-#: `roadsegmentdescription` sigue el formato
+#: `roadsegmentdescription` follows the format
 #: "Exhibition Street between Little Collins Street and Bourke Street".
 _SEGMENT_DESCRIPTION = re.compile(
     r"^(?P<street>.+?) between (?P<first>.+?) and (?P<second>.+)$", re.I
@@ -25,11 +25,12 @@ _WHITESPACE = re.compile(r"\s+")
 
 @dataclass(frozen=True, order=True)
 class SegmentKey:
-    """Clave canónica de un tramo de calle, comparable entre datasets.
+    """Canonical key for a street segment, comparable across datasets.
 
-    El par de calles delimitadoras se guarda **ordenado alfabéticamente** porque
-    "Collins between Russell and Exhibition" y "Collins between Exhibition and
-    Russell" son el mismo tramo, y los dos datasets no usan el mismo orden.
+    The pair of cross streets is stored **alphabetically sorted**, because
+    "Collins between Russell and Exhibition" and "Collins between Exhibition
+    and Russell" are the same segment, and the two datasets do not agree on the
+    order.
     """
 
     street: str
@@ -40,13 +41,13 @@ class SegmentKey:
 
 
 def normalise_street(name: str | None) -> str:
-    """Normaliza un nombre de calle para poder compararlo entre datasets.
+    """Normalise a street name so it can be compared across datasets.
 
-    El histórico escribe `BOURKE STREET` y la geometría `Bourke Street`, con
-    espacios inconsistentes. Se unifica a mayúsculas con espacios colapsados.
-    No se tocan los apóstrofos (`O'CONNELL STREET`) ni se abrevia `STREET`:
-    ambos datasets son consistentes en eso y "normalizar" más sería inventar
-    equivalencias no verificadas.
+    The archive writes `BOURKE STREET` and the geometry dataset writes
+    `Bourke Street`, with inconsistent whitespace. Both are folded to uppercase
+    with collapsed spaces. Apostrophes are left alone (`O'CONNELL STREET`) and
+    `STREET` is not abbreviated: both datasets are consistent there, and
+    "normalising" further would invent equivalences nobody has verified.
     """
     if not name:
         return ""
@@ -54,10 +55,11 @@ def normalise_street(name: str | None) -> str:
 
 
 def segment_key(street: str | None, first: str | None, second: str | None) -> SegmentKey | None:
-    """Construye la clave de tramo, o `None` si falta alguno de los tres nombres.
+    """Build the segment key, or `None` if any of the three names is missing.
 
-    Un tramo sin las dos calles delimitadoras no es identificable: se descarta
-    en lugar de generar una clave parcial que cruzaría con tramos equivocados.
+    A segment without both cross streets is not identifiable, so it is dropped
+    rather than turned into a partial key that would join against the wrong
+    segments.
     """
     street_norm = normalise_street(street)
     first_norm = normalise_street(first)
@@ -69,10 +71,10 @@ def segment_key(street: str | None, first: str | None, second: str | None) -> Se
 
 
 def segment_key_from_description(description: str | None) -> SegmentKey | None:
-    """Clave de tramo a partir de un `roadsegmentdescription`.
+    """Segment key from a `roadsegmentdescription`.
 
-    Devuelve `None` si la descripción no sigue el patrón "X between A and B".
-    1035 de las 29 053 filas de `on-street-parking-bays` no lo siguen.
+    Returns `None` when the description does not follow the "X between A and B"
+    pattern. 1035 of the 29,053 rows in `on-street-parking-bays` do not.
     """
     if not description:
         return None
@@ -83,8 +85,8 @@ def segment_key_from_description(description: str | None) -> SegmentKey | None:
 
 
 def segment_key_from_historical_row(row: dict[str, str]) -> SegmentKey | None:
-    """Clave de tramo a partir de una fila del CSV histórico.
+    """Segment key from a row of the historical CSV.
 
-    Usa `StreetName`, `BetweenStreet1` y `BetweenStreet2`.
+    Uses `StreetName`, `BetweenStreet1` and `BetweenStreet2`.
     """
     return segment_key(row.get("StreetName"), row.get("BetweenStreet1"), row.get("BetweenStreet2"))

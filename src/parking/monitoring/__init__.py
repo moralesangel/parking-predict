@@ -1,14 +1,14 @@
-"""Monitorizacion: degradacion frente a la persistencia, drift y cobertura.
+"""Monitoring: degradation against persistence, drift and sensor coverage.
 
-Las tres senales que pide la Fase 7 del plan, y las tres responden a preguntas
-distintas:
+The three signals phase 7 of the plan asks for, each answering a different
+question:
 
-- `backtest`  -> el modelo, ¿sigue batiendo a la persistencia sobre datos de hoy?
-- `drift`     -> la distribucion de ocupacion, ¿se parece a la de entrenamiento?
-- `coverage`  -> ¿sobre cuanta ciudad seguimos teniendo datos?
+- `backtest`  -> is the model still beating persistence on today's data?
+- `drift`     -> does the occupancy distribution still look like training?
+- `coverage`  -> how much of the city do we still have data for?
 
-Un modelo puede ir perfecto en las dos primeras mientras la tercera se hunde,
-porque las metricas se calculan sobre los sensores que quedan vivos.
+A system can look perfect on the first two while the third collapses, because
+the metrics are computed over whichever sensors are still alive.
 """
 
 from parking.monitoring.backtest import BacktestResult, backtest, coverage_trend, realised_targets

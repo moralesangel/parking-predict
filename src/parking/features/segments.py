@@ -1,14 +1,15 @@
-"""Estructura espacial: tramos de calle y su vecindad.
+"""Spatial structure: street segments and their adjacency.
 
-La unidad espacial del proyecto es el **tramo de calle**, no la celda H3. La
-justificación está medida en `docs/id_crosswalk.md` §5: es el único nivel en el
-que el histórico y el tiempo real se reconcilian, porque el histórico no trae
-coordenadas. Además coincide con la decisión real del conductor —"¿hay sitio en
-esta manzana?"— mejor que un hexágono arbitrario.
+The project's spatial unit is the **street segment**, not an H3 cell. The
+justification is measured in `docs/id_crosswalk.md` §5: it is the only level at
+which the historical archive and the real-time feed reconcile, because the
+archive carries no coordinates. It also matches the driver's actual decision
+— "is there space on this block?" — better than an arbitrary hexagon.
 
-Este módulo deriva la **vecindad** entre tramos sin usar geometría, a partir de
-los propios nombres de calle. Es lo que permite calcular features de "zonas
-vecinas" (Fase 5) sobre el histórico, que no tiene latitud ni longitud.
+This module derives **adjacency** between segments without any geometry, from
+the street names themselves. That is what makes "neighbouring zone" features
+(phase 5) computable over the historical archive, which has no latitude or
+longitude.
 """
 
 from __future__ import annotations
@@ -18,17 +19,17 @@ from collections.abc import Iterable
 
 from parking.ingest.crosswalk import SegmentKey
 
-#: Una intersección es el par no ordenado de las dos calles que se cruzan.
-#: `frozenset` y no tupla porque "Collins con Russell" y "Russell con Collins"
-#: son el mismo cruce.
+#: An intersection is the unordered pair of the two streets that cross there.
+#: `frozenset` rather than a tuple because "Collins at Russell" and "Russell at
+#: Collins" are the same corner.
 Intersection = frozenset[str]
 
 
 def intersections(segment: SegmentKey) -> tuple[Intersection, Intersection]:
-    """Los dos extremos de un tramo, como intersecciones.
+    """The two ends of a segment, as intersections.
 
-    `COLLINS STREET between EXHIBITION STREET and RUSSELL STREET` ocupa los
-    cruces `{COLLINS, EXHIBITION}` y `{COLLINS, RUSSELL}`.
+    `COLLINS STREET between EXHIBITION STREET and RUSSELL STREET` occupies the
+    corners `{COLLINS, EXHIBITION}` and `{COLLINS, RUSSELL}`.
     """
     first, second = segment.cross_streets
     return (
@@ -38,21 +39,22 @@ def intersections(segment: SegmentKey) -> tuple[Intersection, Intersection]:
 
 
 def build_adjacency(segments: Iterable[SegmentKey]) -> dict[SegmentKey, frozenset[SegmentKey]]:
-    """Grafo de vecindad: dos tramos son vecinos si comparten una intersección.
+    """Adjacency graph: two segments are neighbours if they share an intersection.
 
-    Esta definición captura los dos casos que importan al conducir y descarta el
-    que no:
+    This definition captures the two cases that matter while driving, and
+    rejects the one that does not:
 
-    - **Manzana contigua**: `COLLINS entre RUSSELL y EXHIBITION` y `COLLINS
-      entre EXHIBITION y SPRING` comparten el cruce `{COLLINS, EXHIBITION}`.
-    - **Esquina**: `EXHIBITION entre COLLINS y LITTLE COLLINS` comparte ese
-      mismo cruce con el primero, aunque vaya en perpendicular.
-    - **Misma calle pero lejos**: dos tramos de Collins en extremos opuestos del
-      CBD **no** son vecinos, porque no comparten ningún cruce. Definir la
-      vecindad por "misma calle" los habría unido, que es justo el error que se
-      quiere evitar.
+    - **Adjacent block**: `COLLINS between RUSSELL and EXHIBITION` and
+      `COLLINS between EXHIBITION and SPRING` share the corner
+      `{COLLINS, EXHIBITION}`.
+    - **Corner**: `EXHIBITION between COLLINS and LITTLE COLLINS` shares that
+      same corner with the first one, even though it runs perpendicular.
+    - **Same street but far apart**: two Collins Street segments at opposite
+      ends of the CBD share no corner and are **not** neighbours. Defining
+      adjacency as "same street" would have joined them, which is precisely
+      the mistake to avoid.
 
-    Un tramo nunca es vecino de sí mismo.
+    A segment is never its own neighbour.
     """
     by_intersection: dict[Intersection, set[SegmentKey]] = defaultdict(set)
     segments = list(segments)
@@ -69,16 +71,16 @@ def build_adjacency(segments: Iterable[SegmentKey]) -> dict[SegmentKey, frozense
 
 
 def segment_id(segment: SegmentKey) -> str:
-    """Identificador estable y legible de un tramo, para usar como clave en tablas.
+    """Stable, human-readable identifier for a segment, used as a table key.
 
-    Legible a propósito: un `segment_id` que se puede leer hace que inspeccionar
-    el dataset o depurar una predicción no exija volver a cruzar tablas.
+    Readable on purpose: a `segment_id` you can read means inspecting the
+    dataset or debugging a prediction does not require another join.
     """
     first, second = segment.cross_streets
     return f"{segment.street}|{first}|{second}"
 
 
 def parse_segment_id(value: str) -> SegmentKey:
-    """Inverso de `segment_id`."""
+    """Inverse of `segment_id`."""
     street, first, second = value.split("|")
     return SegmentKey(street, (first, second))

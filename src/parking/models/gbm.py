@@ -1,16 +1,16 @@
-"""Modelo LightGBM para la probabilidad de encontrar plaza.
+"""LightGBM model for the probability of finding a parking space.
 
-Se entrena un modelo **por horizonte**. Un único modelo con el horizonte como
-feature compartiría los árboles entre problemas que son distintos: a 5 minutos
-casi todo lo explica el estado actual y a 30 pesa mucho más el patrón horario.
-Separarlos cuesta cuatro entrenamientos y permite además comparar cada uno con
-su baseline.
+One model is trained **per horizon**. A single model with the horizon as a
+feature would share trees between problems that are genuinely different: at 5
+minutes almost everything is explained by the current state, while at 30 the
+hourly pattern weighs far more. Separating them costs four fits and lets each
+one be compared against its own baseline.
 
-El objetivo está desbalanceado (94-96 % positivos) pero **no se reequilibra**.
-Reponderar o remuestrear desplaza las probabilidades predichas y rompe la
-calibración, que es justamente el entregable de este proyecto: la pantalla
-muestra una probabilidad, no una etiqueta. Con `objective="binary"` y sin
-reponderar, LightGBM optimiza log loss y sale calibrado de fábrica.
+The target is imbalanced (94-96% positive) but it is **not rebalanced**.
+Reweighting or resampling shifts the predicted probabilities and breaks
+calibration, which is exactly this project's deliverable: the screen shows a
+probability, not a label. With `objective="binary"` and no reweighting,
+LightGBM optimises log loss and comes out calibrated by construction.
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
-#: Parámetros conservadores. No se buscan hiperparámetros: con 29 M de filas y
-#: un baseline tan fuerte, lo que decide el resultado es si las features
-#: aportan algo, no el tercer decimal de `learning_rate`. Un ajuste fino sin
-#: haber batido antes a la persistencia sería optimizar ruido.
+#: Conservative parameters. No hyperparameter search: with 29M rows and such a
+#: strong baseline, what decides the outcome is whether the features add
+#: anything, not the third decimal of `learning_rate`. Fine-tuning before
+#: beating persistence would be optimising noise.
 DEFAULT_PARAMS: dict[str, object] = {
     "objective": "binary",
     "metric": ["binary_logloss"],
@@ -46,7 +46,7 @@ DEFAULT_PARAMS: dict[str, object] = {
 
 @dataclass
 class GradientBoostingModel:
-    """LightGBM envuelto con la misma interfaz que los baselines."""
+    """LightGBM wrapped behind the same interface as the baselines."""
 
     features: list[str]
     params: dict[str, object] = field(default_factory=lambda: dict(DEFAULT_PARAMS))
@@ -56,8 +56,8 @@ class GradientBoostingModel:
     best_iteration: int | None = None
 
     def _matrix(self, frame: pl.DataFrame) -> np.ndarray:
-        # float32 a propósito: con millones de filas, float64 duplica la memoria
-        # sin cambiar el resultado de un árbol.
+        # float32 on purpose: over millions of rows, float64 doubles memory
+        # without changing a tree's result.
         return frame.select(self.features).to_numpy().astype(np.float32)
 
     def fit(
@@ -67,11 +67,11 @@ class GradientBoostingModel:
         *,
         validation: pl.DataFrame | None = None,
     ) -> GradientBoostingModel:
-        """Entrena. Si hay validación, para pronto para no sobreajustar.
+        """Fit. With a validation set, stop early to avoid overfitting.
 
-        La validación debe ser **posterior** al entrenamiento: parar pronto
-        mirando datos del pasado elegiría el número de árboles con información
-        que en producción no existiría.
+        The validation set must be **later** than training: early-stopping
+        against past data would pick the number of trees using information that
+        would not exist in production.
         """
         usable = frame.filter(pl.col(target).is_not_null())
         train_set = lgb.Dataset(
@@ -100,26 +100,27 @@ class GradientBoostingModel:
             callbacks=callbacks,
         )
         self.best_iteration = self.booster.best_iteration or self.num_boost_round
-        logger.info("entrenado %s con %d arboles", target, self.best_iteration)
+        logger.info("trained %s with %d trees", target, self.best_iteration)
         return self
 
     def predict_proba(self, frame: pl.DataFrame) -> np.ndarray:
         if self.booster is None:
-            raise RuntimeError("llama antes a fit")
+            raise RuntimeError("call fit first")
         return np.asarray(
             self.booster.predict(self._matrix(frame), num_iteration=self.best_iteration),
             dtype=np.float64,
         )
 
     def save(self, directory: Path, name: str) -> Path:
-        """Guarda el booster y la lista de features.
+        """Save the booster and its feature list.
 
-        La lista va aparte y es imprescindible: el booster conserva el orden de
-        las columnas pero no de donde salen, y puntuar con las features en otro
-        orden daria numeros plausibles y equivocados sin lanzar ningun error.
+        The list is stored separately and is essential: the booster keeps the
+        column count but not where they came from, and scoring with the
+        features in a different order would produce plausible, wrong numbers
+        without raising anything.
         """
         if self.booster is None:
-            raise RuntimeError("llama antes a fit")
+            raise RuntimeError("call fit first")
         directory.mkdir(parents=True, exist_ok=True)
         model_path = directory / f"{name}.txt"
         self.booster.save_model(str(model_path), num_iteration=self.best_iteration)
@@ -131,7 +132,7 @@ class GradientBoostingModel:
 
     @classmethod
     def load(cls, directory: Path, name: str) -> GradientBoostingModel:
-        """Carga un modelo guardado con `save`."""
+        """Load a model saved with `save`."""
         metadata = json.loads((directory / f"{name}.json").read_text(encoding="utf-8"))
         model = cls(features=metadata["features"])
         model.booster = lgb.Booster(model_file=str(directory / f"{name}.txt"))
@@ -139,13 +140,13 @@ class GradientBoostingModel:
         return model
 
     def importances(self) -> pl.DataFrame:
-        """Importancia por ganancia, que es la que indica cuánto aporta cada feature.
+        """Gain-based importance, which is what says how much each feature adds.
 
-        `split` contaría cuántas veces se usa cada una, y una feature ruidosa
-        con muchos valores distintos se usa mucho sin aportar nada.
+        `split` would count how often each is used, and a noisy feature with
+        many distinct values gets used a lot while adding nothing.
         """
         if self.booster is None:
-            raise RuntimeError("llama antes a fit")
+            raise RuntimeError("call fit first")
         gains = self.booster.feature_importance(importance_type="gain")
         total = float(gains.sum()) or 1.0
         return (
