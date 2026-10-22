@@ -42,6 +42,10 @@ services:
     environment:
       PARKING_DATA_DIR: /data
       PARKING_STUCK_AFTER_HOURS: ${PARKING_STUCK_AFTER_HOURS:-24}
+      # /predict necesita, dentro de ./data: processed/models/ (de
+      # train_evaluate.py) y reference/parking_bays.json (de
+      # fetch_reference.py). Sin ellos el endpoint responde 503 con el
+      # mensaje de que falta; el resto de la API sigue funcionando.
     volumes:
       # Solo lectura: la API nunca escribe datos, solo sirve lo que el poller
       # dejó. Montarlo `ro` convierte esa intención en una garantía.

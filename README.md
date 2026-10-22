@@ -8,7 +8,7 @@ datos en tiempo real: cuando conduces 12 minutos hasta el destino, lo que import
 no es el estado actual de la zona sino su estado al llegar. La referencia a batir
 es, precisamente, "usar el estado actual" (baseline de persistencia).
 
-> Estado: **Fase 5 (baselines y modelo) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
+> Estado: **Fase 6 (prediccion en el producto) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
 
 ## Requisitos
 
@@ -52,6 +52,9 @@ uv run python scripts/build_dataset.py --months 2019-01:2019-12
 # Entrenar baselines + LightGBM y generar el informe de resultados
 uv run python scripts/train_evaluate.py
 uv run python scripts/plot_results.py
+
+# Geometria de referencia, que /predict necesita para situar los tramos
+uv run python scripts/fetch_reference.py
 ```
 
 Mapa en tiempo real (API + frontend en http://localhost:8000):
@@ -72,6 +75,7 @@ docker compose logs -f poller
 | Endpoint | Para que sirve |
 |---|---|
 | `GET /bays/live` | Estado de cada plaza con su bandera de fiabilidad |
+| `GET /predict?lat=&lon=&eta_minutes=` | Probabilidad de encontrar sitio al llegar, por zona |
 | `GET /zones/coverage` | Cobertura de sensores por zona |
 | `GET /health` | `ok`, `stale` o `no_data`, con la antiguedad del ultimo lote |
 | `GET /docs` | OpenAPI interactivo |
@@ -84,6 +88,11 @@ Dos decisiones que vienen de la Fase 2:
 - La API **publica la antiguedad de sus propios datos**. Si el poller muere, la
   API seguiria sirviendo el ultimo snapshot; `is_stale` y `/health` convierten
   ese fallo silencioso en uno visible, y el mapa muestra un aviso.
+- `/predict` devuelve **varias zonas y no la mejor**, ordenadas por distancia.
+  Senalar un unico hueco mandaria a todo el que pregunte al mismo sitio.
+- La respuesta incluye `model_caveat`: el modelo esta entrenado con 2019 y
+  aplicado a datos de hoy, asi que esto es una **demostracion del flujo**, no un
+  servicio fiable. Ver [`docs/results.md`](docs/results.md) §6.
 
 ## Documentacion
 

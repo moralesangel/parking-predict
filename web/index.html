@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aparcamiento en Melbourne — estado en tiempo real</title>
+<title>Aparcamiento en Melbourne — estado y predicción</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
@@ -15,6 +15,7 @@
     --fg: #1a1a1a;
     --muted: #5f6368;
     --border: #dadce0;
+    --accent: #2a78d6;
     --warn-bg: #fef7e0;
     --warn-fg: #7a5b00;
     --warn-border: #f0c36d;
@@ -23,6 +24,7 @@
     :root {
       --bg: #1f2023; --fg: #e8eaed; --muted: #9aa0a6; --border: #3c4043;
       --warn-bg: #3a2f10; --warn-fg: #fdd663; --warn-border: #7a5b00;
+      --accent: #3987e5;
     }
   }
   * { box-sizing: border-box; }
@@ -35,7 +37,7 @@
   header { padding: 12px 16px; border-bottom: 1px solid var(--border); flex: none; }
   h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
   .sub { color: var(--muted); font-size: 12px; }
-  #map { flex: 1 1 auto; min-height: 0; background: var(--border); }
+  #map { flex: 1 1 auto; min-height: 0; background: var(--border); cursor: crosshair; }
   footer {
     padding: 8px 16px; border-top: 1px solid var(--border);
     font-size: 11px; color: var(--muted); flex: none;
@@ -44,7 +46,7 @@
 
   .panel {
     position: absolute; top: 76px; right: 12px; z-index: 500;
-    width: 232px; max-height: calc(100% - 150px); overflow-y: auto;
+    width: 268px; max-height: calc(100% - 150px); overflow-y: auto;
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 12px; box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
   }
@@ -62,10 +64,40 @@
   .warn {
     background: var(--warn-bg); color: var(--warn-fg);
     border: 1px solid var(--warn-border); border-radius: 6px;
-    padding: 7px 9px; margin: 0 0 10px; font-size: 12px;
+    padding: 7px 9px; margin: 0 0 10px; font-size: 11.5px;
   }
   label.toggle { display: flex; align-items: center; gap: 7px; font-size: 12px;
                  cursor: pointer; padding: 3px 0; }
+
+  .tabs { display: flex; gap: 4px; margin: 0 0 12px; }
+  .tabs button {
+    flex: 1; padding: 7px 6px; font: inherit; font-size: 12px; cursor: pointer;
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  .tabs button[aria-selected="true"] {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .eta { display: flex; justify-content: space-between; align-items: baseline; }
+  .eta strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+
+  .zone { display: flex; align-items: center; gap: 9px; padding: 6px 0;
+          border-top: 1px solid var(--border); }
+  .zone:first-of-type { border-top: 0; }
+  .zone .p { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 14px;
+             min-width: 42px; text-align: right; }
+  .zone .meta { flex: 1; min-width: 0; }
+  /* display:block es necesario: overflow/text-overflow no hacen nada sobre un
+     elemento inline, y el nombre del tramo se salia del panel. */
+  .zone .name { display: block; font-size: 12px; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+  .zone .sub2 { display: block; font-size: 11px; color: var(--muted); }
+
+  .ramp { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
+  .ramp i { flex: 1; }
+  .ramp-labels { display: flex; justify-content: space-between; font-size: 10px;
+                 color: var(--muted); }
   .leaflet-popup-content { font: 13px/1.45 system-ui, sans-serif; margin: 10px 12px; }
   .leaflet-popup-content dl { display: grid; grid-template-columns: auto auto;
                               gap: 2px 10px; margin: 6px 0 0; }
@@ -83,43 +115,73 @@
 <div id="map"></div>
 
 <aside class="panel" id="panel" hidden>
+  <div class="tabs" role="tablist">
+    <button id="tabLive" role="tab" aria-selected="true">Estado ahora</button>
+    <button id="tabPredict" role="tab" aria-selected="false">¿Habrá sitio?</button>
+  </div>
+
   <div class="warn" id="staleWarning" hidden></div>
 
-  <h2>Plazas libres ahora</h2>
-  <!-- El numero y el sufijo son hermanos, no anidados: escribir textContent en
-       el <p> borraria el <small> que hay dentro y la siguiente escritura
-       fallaria sobre null. -->
-  <p class="big"><span id="freeCount">—</span><small id="freeOf"></small></p>
+  <!-- ---------- modo estado actual ---------- -->
+  <section id="liveView">
+    <h2>Plazas libres ahora</h2>
+    <p class="big"><span id="freeCount">—</span><small id="freeOf"></small></p>
 
-  <hr>
+    <hr>
+    <h2>Estado</h2>
+    <div class="row"><span><i class="swatch" style="background:var(--free)"></i>Libre</span>
+                     <span class="n" id="nFree">—</span></div>
+    <div class="row"><span><i class="swatch" style="background:var(--occupied)"></i>Ocupada</span>
+                     <span class="n" id="nOccupied">—</span></div>
+    <div class="row"><span><i class="swatch" style="background:var(--unknown)"></i>Sin dato fiable</span>
+                     <span class="n" id="nUnknown">—</span></div>
 
-  <h2>Estado</h2>
-  <div class="row"><span><i class="swatch" style="background:var(--free)"></i>Libre</span>
-                   <span class="n" id="nFree">—</span></div>
-  <div class="row"><span><i class="swatch" style="background:var(--occupied)"></i>Ocupada</span>
-                   <span class="n" id="nOccupied">—</span></div>
-  <div class="row"><span><i class="swatch" style="background:var(--unknown)"></i>Sin dato fiable</span>
-                   <span class="n" id="nUnknown">—</span></div>
+    <hr>
+    <h2>Cobertura de sensores</h2>
+    <div class="row"><span>Plazas en el feed</span><span class="n" id="nTotal">—</span></div>
+    <div class="row"><span>Con lectura fiable</span><span class="n" id="nReliable">—</span></div>
+    <div class="row"><span>Sensor congelado</span><span class="n" id="nStuck">—</span></div>
+    <div class="row"><span>Fuera de línea</span><span class="n" id="nOffline">—</span></div>
+    <p class="note" id="coverageNote"></p>
 
-  <hr>
+    <hr>
+    <label class="toggle">
+      <input type="checkbox" id="showUnknown" checked>
+      Mostrar plazas sin dato
+    </label>
+    <p class="note">
+      Una plaza sin dato fiable no es una plaza libre: su sensor no reporta o
+      lleva mucho sin cambiar de estado.
+    </p>
+  </section>
 
-  <h2>Cobertura de sensores</h2>
-  <div class="row"><span>Plazas en el feed</span><span class="n" id="nTotal">—</span></div>
-  <div class="row"><span>Con lectura fiable</span><span class="n" id="nReliable">—</span></div>
-  <div class="row"><span>Sensor congelado</span><span class="n" id="nStuck">—</span></div>
-  <div class="row"><span>Fuera de línea</span><span class="n" id="nOffline">—</span></div>
-  <p class="note" id="coverageNote"></p>
+  <!-- ---------- modo prediccion ---------- -->
+  <section id="predictView" hidden>
+    <div class="warn" id="modelCaveat"></div>
 
-  <hr>
+    <h2>Destino</h2>
+    <p class="note" id="destinationHint">Toca el mapa para elegir a dónde vas.</p>
 
-  <label class="toggle">
-    <input type="checkbox" id="showUnknown" checked>
-    Mostrar plazas sin dato
-  </label>
-  <p class="note">
-    Una plaza sin dato fiable no es una plaza libre: su sensor no reporta o
-    lleva mucho sin cambiar de estado.
-  </p>
+    <div id="etaBlock" hidden>
+      <hr>
+      <h2>Llego en</h2>
+      <div class="eta">
+        <strong id="etaValue">15 min</strong>
+        <span class="note" id="horizonNote"></span>
+      </div>
+      <input type="range" id="etaSlider" min="5" max="30" step="5" value="15">
+
+      <hr>
+      <h2>Probabilidad de encontrar sitio</h2>
+      <div class="ramp" id="ramp"></div>
+      <div class="ramp-labels"><span>0 %</span><span>50 %</span><span>100 %</span></div>
+      <div id="zoneList"></div>
+      <p class="note">
+        Se muestran varias zonas y no solo la mejor, ordenadas por distancia.
+        Señalar un único hueco mandaría a todo el mundo al mismo sitio.
+      </p>
+    </div>
+  </section>
 </aside>
 
 <footer>
@@ -136,8 +198,8 @@
 "use strict";
 
 // Cadencia del feed de origen: un lote nuevo cada 2 min (medido).
-// Refrescar mas rapido solo repetiria el mismo lote.
 const REFRESH_MS = 120000;
+const SEARCH_RADIUS_M = 600;
 
 const COLORS = { free: "#1a9850", occupied: "#d73027", unknown: "#9aa0a6" };
 const LABELS = {
@@ -147,33 +209,37 @@ const LABELS = {
   offline: "el sensor no aparece en el ultimo lote del feed",
 };
 
+// Rampa SECUENCIAL de un solo tono para la probabilidad. Deliberadamente no es
+// rojo-verde: eso leeria como "bueno/malo" y lo confunde buena parte de las
+// personas con daltonismo. La probabilidad es una magnitud, asi que va de claro
+// a oscuro, y ademas se imprime siempre el numero.
+const PROB_RAMP = ["#dbe9f8", "#aecdef", "#7fb0e4", "#5192d8", "#2a78d6", "#1b5aa6"];
+const probColor = (p) => PROB_RAMP[Math.min(PROB_RAMP.length - 1, Math.floor(p * PROB_RAMP.length))];
+
 const map = L.map("map", { preferCanvas: true }).setView([-37.8136, 144.9631], 14);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 
-// Canvas unico para las ~6300 plazas: con el renderer SVG por defecto el
-// navegador crearia 6300 nodos y el mapa se arrastra al hacer zoom.
 const renderer = L.canvas({ padding: 0.3 });
 const layers = {
   free: L.layerGroup().addTo(map),
   occupied: L.layerGroup().addTo(map),
   unknown: L.layerGroup().addTo(map),
 };
+const predictLayer = L.layerGroup();
+let destinationMarker = null;
+let destinationCircle = null;
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => n.toLocaleString("es-ES");
 
-function popupHtml(bay) {
-  return `<strong>${LABELS[bay.state]}</strong>
-    <dl>
-      <dt>Plaza</dt><dd>${bay.kerbsideid}</dd>
-      <dt>Zona</dt><dd>${bay.zone_number ?? "sin zona"}</dd>
-      <dt>Ultimo cambio</dt><dd>${formatAge(bay.status_age_hours)}</dd>
-      <dt>Sensor</dt><dd>${LABELS[bay.quality]}</dd>
-    </dl>`;
-}
+let mode = "live";
+let destination = null;
+let lastLive = null;
+
+/* ---------------- estado actual ---------------- */
 
 function formatAge(hours) {
   if (hours < 1) return `hace ${Math.round(hours * 60)} min`;
@@ -181,23 +247,27 @@ function formatAge(hours) {
   return `hace ${Math.round(hours / 24)} dias`;
 }
 
-function draw(bays) {
+function drawBays(bays) {
   Object.values(layers).forEach((layer) => layer.clearLayers());
   for (const bay of bays) {
     L.circleMarker([bay.latitude, bay.longitude], {
       renderer,
       radius: bay.state === "unknown" ? 3 : 4,
-      color: COLORS[bay.state],
-      weight: 0,
+      color: COLORS[bay.state], weight: 0,
       fillColor: COLORS[bay.state],
       fillOpacity: bay.state === "unknown" ? 0.45 : 0.85,
     })
-      .bindPopup(() => popupHtml(bay))
+      .bindPopup(() => `<strong>${LABELS[bay.state]}</strong>
+        <dl><dt>Plaza</dt><dd>${bay.kerbsideid}</dd>
+        <dt>Zona</dt><dd>${bay.zone_number ?? "sin zona"}</dd>
+        <dt>Ultimo cambio</dt><dd>${formatAge(bay.status_age_hours)}</dd>
+        <dt>Sensor</dt><dd>${LABELS[bay.quality]}</dd></dl>`)
       .addTo(layers[bay.state]);
   }
 }
 
-function render(data) {
+function renderLive(data) {
+  lastLive = data;
   const s = data.summary;
   const counts = { free: 0, occupied: 0, unknown: 0 };
   for (const bay of data.bays) counts[bay.state]++;
@@ -222,39 +292,162 @@ function render(data) {
     `${fmt(s.reliable_bays)} de ${fmt(s.total_bays)} plazas con sensor fiable.`;
 
   const warning = $("staleWarning");
+  warning.hidden = !data.snapshot.is_stale;
   if (data.snapshot.is_stale) {
-    warning.hidden = false;
     warning.textContent =
       `Los datos tienen ${Math.round(age / 60)} min. El poller puede estar caido: ` +
       `lo que se muestra es el ultimo estado conocido, no el actual.`;
-  } else {
-    warning.hidden = true;
   }
 
-  draw(data.bays);
+  drawBays(data.bays);
   $("panel").hidden = false;
 }
 
-async function load() {
+async function loadLive() {
   try {
     const response = await fetch("bays/live", { headers: { Accept: "application/json" } });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.detail || `HTTP ${response.status}`);
-    }
-    render(await response.json());
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+    renderLive(await response.json());
   } catch (error) {
     $("subtitle").textContent = `No se pudieron cargar los datos: ${error.message}`;
   }
 }
 
+/* ---------------- prediccion ---------------- */
+
+function drawZones(zones) {
+  predictLayer.clearLayers();
+  for (const zone of zones) {
+    const pct = Math.round(zone.probability * 100);
+    L.circleMarker([zone.latitude, zone.longitude], {
+      radius: 9 + Math.sqrt(zone.total_bays) * 2.2,
+      color: "#ffffff", weight: 2,
+      fillColor: probColor(zone.probability), fillOpacity: 0.88,
+    })
+      .bindTooltip(`${pct} %`, { permanent: true, direction: "center", className: "zone-label" })
+      .bindPopup(`<strong>${zone.label}</strong>
+        <dl><dt>Probabilidad</dt><dd>${pct} %</dd>
+        <dt>Libres ahora</dt><dd>${zone.free_bays} de ${zone.total_bays}</dd>
+        <dt>Distancia</dt><dd>${Math.round(zone.distance_m)} m</dd></dl>`)
+      .addTo(predictLayer);
+  }
+}
+
+function renderZones(data) {
+  $("modelCaveat").textContent = data.model_caveat;
+  $("horizonNote").textContent = `modelo de ${data.horizon_minutes} min`;
+
+  const list = $("zoneList");
+  list.textContent = "";
+  if (!data.zones.length) {
+    list.innerHTML = `<p class="note">No hay zonas con datos a menos de ${SEARCH_RADIUS_M} m.</p>`;
+  }
+  for (const zone of data.zones) {
+    const pct = Math.round(zone.probability * 100);
+    const row = document.createElement("div");
+    row.className = "zone";
+    row.innerHTML =
+      `<span class="swatch" style="background:${probColor(zone.probability)};width:12px;height:12px"></span>
+       <span class="meta"><span class="name">${zone.label}</span>
+       <span class="sub2">${zone.free_bays}/${zone.total_bays} libres · ${Math.round(zone.distance_m)} m</span></span>
+       <span class="p">${pct} %</span>`;
+    list.appendChild(row);
+  }
+  drawZones(data.zones);
+}
+
+async function loadPrediction() {
+  if (!destination) return;
+  const eta = $("etaSlider").value;
+  try {
+    const url = `predict?lat=${destination.lat}&lon=${destination.lng}` +
+                `&eta_minutes=${eta}&radius_m=${SEARCH_RADIUS_M}&limit=12`;
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+    renderZones(await response.json());
+  } catch (error) {
+    $("zoneList").innerHTML = `<p class="note">No se pudo predecir: ${error.message}</p>`;
+  }
+}
+
+function setDestination(latlng) {
+  destination = latlng;
+  if (destinationMarker) map.removeLayer(destinationMarker);
+  if (destinationCircle) map.removeLayer(destinationCircle);
+  destinationMarker = L.marker(latlng).addTo(map);
+  destinationCircle = L.circle(latlng, {
+    radius: SEARCH_RADIUS_M, color: "#2a78d6", weight: 1,
+    fillColor: "#2a78d6", fillOpacity: 0.05,
+  }).addTo(map);
+  $("destinationHint").textContent = "Toca otro punto para cambiar el destino.";
+  $("etaBlock").hidden = false;
+  loadPrediction();
+}
+
+/* ---------------- modos ---------------- */
+
+function setMode(next) {
+  mode = next;
+  const predicting = mode === "predict";
+  $("tabLive").setAttribute("aria-selected", String(!predicting));
+  $("tabPredict").setAttribute("aria-selected", String(predicting));
+  $("liveView").hidden = predicting;
+  $("predictView").hidden = !predicting;
+
+  if (predicting) {
+    Object.values(layers).forEach((layer) => map.removeLayer(layer));
+    map.addLayer(predictLayer);
+    if (destination) loadPrediction();
+  } else {
+    map.removeLayer(predictLayer);
+    layers.free.addTo(map);
+    layers.occupied.addTo(map);
+    if ($("showUnknown").checked) layers.unknown.addTo(map);
+  }
+}
+
+$("ramp").innerHTML = PROB_RAMP.map((c) => `<i style="background:${c}"></i>`).join("");
+$("tabLive").addEventListener("click", () => setMode("live"));
+$("tabPredict").addEventListener("click", () => setMode("predict"));
+$("etaSlider").addEventListener("input", (event) => {
+  $("etaValue").textContent = `${event.target.value} min`;
+});
+$("etaSlider").addEventListener("change", loadPrediction);
 $("showUnknown").addEventListener("change", (event) => {
+  if (mode !== "live") return;
   if (event.target.checked) map.addLayer(layers.unknown);
   else map.removeLayer(layers.unknown);
 });
+map.on("click", (event) => {
+  if (mode !== "predict") setMode("predict");
+  setDestination(event.latlng);
+});
 
-load();
-setInterval(load, REFRESH_MS);
+// Destino por URL: ?lat=&lon=&eta=. Hace el enlace compartible, y permite
+// comprobar el modo prediccion sin depender de un clic.
+function applyUrlDestination() {
+  const params = new URLSearchParams(location.search);
+  const lat = parseFloat(params.get("lat"));
+  const lon = parseFloat(params.get("lon"));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  const eta = parseInt(params.get("eta") ?? "15", 10);
+  if ([5, 10, 15, 30].includes(eta)) {
+    $("etaSlider").value = String(eta);
+    $("etaValue").textContent = `${eta} min`;
+  }
+  setMode("predict");
+  map.setView([lat, lon], 16);
+  setDestination(L.latLng(lat, lon));
+}
+
+loadLive();
+applyUrlDestination();
+setInterval(() => { loadLive(); if (mode === "predict") loadPrediction(); }, REFRESH_MS);
 </script>
+<style>
+  .zone-label { background: transparent; border: 0; box-shadow: none;
+                color: #fff; font-weight: 700; font-size: 11px; text-shadow: 0 1px 2px rgb(0 0 0 / .5); }
+</style>
 </body>
 </html>
