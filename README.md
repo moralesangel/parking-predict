@@ -8,7 +8,7 @@ datos en tiempo real: cuando conduces 12 minutos hasta el destino, lo que import
 no es el estado actual de la zona sino su estado al llegar. La referencia a batir
 es, precisamente, "usar el estado actual" (baseline de persistencia).
 
-> Estado: **Fase 0 (setup) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
+> Estado: **Fase 1 (ingesta) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
 
 ## Requisitos
 
@@ -30,6 +30,49 @@ uv run ruff check .
 uv run ruff format --check .
 uv run pytest
 ```
+
+## Uso
+
+```bash
+# Un snapshot del feed en tiempo real (comprueba que la ingesta funciona)
+uv run python -m parking.ingest.poller --once
+
+# Sondeo continuo (cada 5 min por defecto)
+uv run python -m parking.ingest.poller
+
+# Recalcular el informe de cruce de identificadores
+uv run python scripts/crosswalk_report.py
+```
+
+Con Docker, el poller como servicio:
+
+```bash
+docker compose up -d poller
+docker compose logs -f poller
+```
+
+## Documentacion
+
+| Documento | Contenido |
+|---|---|
+| [`docs/data_schema.md`](docs/data_schema.md) | Esquema real de la API, verificado campo a campo |
+| [`docs/id_crosswalk.md`](docs/id_crosswalk.md) | Por que el historico no cruza con el tiempo real, y que si funciona |
+
+Dos hallazgos que condicionan el resto del proyecto:
+
+- **`Present` significa plaza ocupada**, no libre: el campo describe el coche.
+- **`lastupdated` es el sello del lote del feed**, no del sensor. Los 5264
+  sensores vivos comparten un valor identico y los caidos se quedan congelados
+  con el del ultimo lote en que aparecieron. De las 6324 plazas del dataset,
+  **solo ~5264 reportan**; las otras 979 llevan mas de 30 dias caidas.
+
+## Restricciones del entorno de desarrollo
+
+En la maquina de desarrollo (Windows 11), la politica de **Application Control**
+bloquea las extensiones nativas de `pandas`, `duckdb` y `pyarrow.parquet`. El
+stack usa **polars**, cuyo motor Parquet si funciona, y `duckdb` queda como
+extra opcional (`uv sync --extra sql`) para usarlo en el contenedor Linux. El
+plan permitia "pandas/polars", asi que no es una desviacion.
 
 ## Estructura
 

@@ -1,0 +1,23 @@
+# Fase 1: solo el poller. La API y el frontend se añaden en la Fase 3,
+# cuando exista el endpoint `/bays/live`.
+services:
+  poller:
+    build: .
+    image: parking-predict/poller
+    restart: unless-stopped
+    environment:
+      # El contenedor escribe en /data, que se monta desde ./data del host.
+      PARKING_DATA_DIR: /data
+      PARKING_POLL_INTERVAL_SECONDS: ${PARKING_POLL_INTERVAL_SECONDS:-300}
+      PARKING_API_BASE_URL: ${PARKING_API_BASE_URL:-https://data.melbourne.vic.gov.au}
+      PARKING_REALTIME_DATASET: ${PARKING_REALTIME_DATASET:-on-street-parking-bay-sensors}
+    volumes:
+      - ./data:/data
+    # El UID coincide con el usuario `parking` del Dockerfile para que los
+    # ficheros del volumen no queden propiedad de root en el host.
+    user: "10001"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

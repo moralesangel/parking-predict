@@ -1,0 +1,15 @@
+# Los datos se montan como volumen, nunca van en la imagen (son GB).
+data/
+.venv/
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+notebooks/
+docs/
+tests/
+scripts/
+web/
+.env
