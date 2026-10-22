@@ -57,13 +57,17 @@ class Settings(BaseSettings):
 
     # --- Almacenamiento ---
     data_dir: Path = _REPO_ROOT / "data"
+    # Frontend estático que sirve la API. Explícito y no deducido de `__file__`:
+    # al instalar el paquete, el módulo vive en site-packages y la ruta relativa
+    # dejaría de apuntar al repositorio. En Docker se fija a /app/web.
+    web_dir: Path = _REPO_ROOT / "web"
 
     @field_validator("api_base_url")
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
 
-    @field_validator("data_dir")
+    @field_validator("data_dir", "web_dir")
     @classmethod
     def _absolutise(cls, value: Path) -> Path:
         return value if value.is_absolute() else (_REPO_ROOT / value).resolve()

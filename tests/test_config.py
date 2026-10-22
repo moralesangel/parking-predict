@@ -45,6 +45,16 @@ def test_relative_data_dir_becomes_absolute(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.data_dir.is_absolute()
 
 
+def test_web_dir_is_configurable_and_absolute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """En Docker el paquete vive en site-packages: la ruta no puede deducirse."""
+    monkeypatch.setenv("PARKING_WEB_DIR", "web")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.web_dir.is_absolute()
+    assert settings.web_dir.name == "web"
+
+
 def test_derived_paths_hang_off_data_dir(tmp_path: Path) -> None:
     settings = Settings(_env_file=None, data_dir=tmp_path)
 
