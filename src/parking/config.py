@@ -35,9 +35,11 @@ class Settings(BaseSettings):
     api_key: str | None = None
 
     # --- Sondeo ---
-    # 5 min: intervalo prudente mientras los límites de la API no estén
-    # documentados (regla 3 del plan).
-    poll_interval_seconds: int = Field(default=300, ge=60)
+    # 120 s: cadencia nativa del feed, medida el 2026-10-22 (los lotes salen
+    # cada 2 min exactos). Sondear mas despacio pierde lotes enteros; mas
+    # rapido solo relee el mismo. El suelo de 60 s protege la API de origen,
+    # cuyos limites no estan documentados (regla 3 del plan).
+    poll_interval_seconds: int = Field(default=120, ge=60)
     request_timeout_seconds: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=4, ge=0)
 

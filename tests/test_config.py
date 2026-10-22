@@ -13,7 +13,7 @@ def test_defaults_are_usable_without_env(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("PARKING_POLL_INTERVAL_SECONDS", raising=False)
     settings = Settings(_env_file=None)
 
-    assert settings.poll_interval_seconds == 300
+    assert settings.poll_interval_seconds == 120
     assert settings.realtime_dataset == "on-street-parking-bay-sensors"
     assert settings.api_key is None
 

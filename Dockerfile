@@ -31,7 +31,7 @@ USER parking
 
 ENV PARKING_DATA_DIR=/data
 
-# Comprueba que el último snapshot no es demasiado viejo. Con sondeo cada 5 min,
+# Comprueba que el último snapshot no es demasiado viejo. Con sondeo cada 2 min,
 # 20 min sin escribir significa que el poller está atascado aunque el proceso
 # siga vivo: los fallos de red se registran y se omiten, no matan el bucle.
 HEALTHCHECK --interval=5m --timeout=20s --start-period=2m --retries=2 \

@@ -8,7 +8,7 @@ services:
     environment:
       # El contenedor escribe en /data, que se monta desde ./data del host.
       PARKING_DATA_DIR: /data
-      PARKING_POLL_INTERVAL_SECONDS: ${PARKING_POLL_INTERVAL_SECONDS:-300}
+      PARKING_POLL_INTERVAL_SECONDS: ${PARKING_POLL_INTERVAL_SECONDS:-120}
       PARKING_API_BASE_URL: ${PARKING_API_BASE_URL:-https://data.melbourne.vic.gov.au}
       PARKING_REALTIME_DATASET: ${PARKING_REALTIME_DATASET:-on-street-parking-bay-sensors}
     volumes:
