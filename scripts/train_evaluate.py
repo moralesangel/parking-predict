@@ -119,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(model, GradientBoostingModel):
                 model.fit(train, target, validation=validation)
                 importances[horizon] = model.importances()
+                model.save(settings.processed_dir / "models", f"lightgbm_h{horizon}")
             else:
                 model.fit(train, target)
             probabilities = model.predict_proba(evaluable)

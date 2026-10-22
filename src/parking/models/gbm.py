@@ -15,8 +15,10 @@ reponderar, LightGBM optimiza log loss y sale calibrado de fábrica.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import lightgbm as lgb
 import numpy as np
@@ -108,6 +110,33 @@ class GradientBoostingModel:
             self.booster.predict(self._matrix(frame), num_iteration=self.best_iteration),
             dtype=np.float64,
         )
+
+    def save(self, directory: Path, name: str) -> Path:
+        """Guarda el booster y la lista de features.
+
+        La lista va aparte y es imprescindible: el booster conserva el orden de
+        las columnas pero no de donde salen, y puntuar con las features en otro
+        orden daria numeros plausibles y equivocados sin lanzar ningun error.
+        """
+        if self.booster is None:
+            raise RuntimeError("llama antes a fit")
+        directory.mkdir(parents=True, exist_ok=True)
+        model_path = directory / f"{name}.txt"
+        self.booster.save_model(str(model_path), num_iteration=self.best_iteration)
+        (directory / f"{name}.json").write_text(
+            json.dumps({"features": self.features, "best_iteration": self.best_iteration}),
+            encoding="utf-8",
+        )
+        return model_path
+
+    @classmethod
+    def load(cls, directory: Path, name: str) -> GradientBoostingModel:
+        """Carga un modelo guardado con `save`."""
+        metadata = json.loads((directory / f"{name}.json").read_text(encoding="utf-8"))
+        model = cls(features=metadata["features"])
+        model.booster = lgb.Booster(model_file=str(directory / f"{name}.txt"))
+        model.best_iteration = metadata["best_iteration"]
+        return model
 
     def importances(self) -> pl.DataFrame:
         """Importancia por ganancia, que es la que indica cuánto aporta cada feature.
