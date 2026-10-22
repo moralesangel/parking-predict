@@ -126,3 +126,37 @@ class HealthResponse(BaseModel):
     status: str = Field(description="ok, stale o no_data")
     detail: str
     snapshot: SnapshotInfo | None = None
+
+
+class ZonePrediction(BaseModel):
+    """Probabilidad de encontrar sitio en un tramo de calle."""
+
+    segment_id: str = Field(description="CALLE|CRUCE_A|CRUCE_B, las dos delimitadoras ordenadas")
+    label: str = Field(description="El mismo tramo en texto legible")
+    probability: float = Field(
+        ge=0, le=1, description="P(al menos una plaza libre al llegar), calibrada"
+    )
+    free_bays: int = Field(description="Plazas libres AHORA entre las fiables")
+    total_bays: int = Field(description="Plazas con lectura fiable en el tramo")
+    latitude: float
+    longitude: float
+    distance_m: float = Field(description="Distancia desde el destino consultado")
+    is_interpolated: bool = Field(
+        description="True si el ultimo estado se arrastro de un lote anterior por un hueco"
+    )
+
+
+class PredictResponse(BaseModel):
+    """Respuesta de `GET /predict`."""
+
+    snapshot: SnapshotInfo
+    eta_minutes: float = Field(description="Lo que pidio el cliente")
+    horizon_minutes: int = Field(
+        description="Horizonte realmente usado: se ajusta al modelo entrenado mas cercano"
+    )
+    zones: list[ZonePrediction] = Field(
+        description="Tramos cercanos ordenados por distancia, no por probabilidad: "
+        "ordenarlos por probabilidad mandaria a todo el mundo al mismo sitio"
+    )
+    model_caveat: str = Field(description="Por que esto es una demostracion y no un servicio")
+    attribution: str

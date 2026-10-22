@@ -4,6 +4,7 @@ Sirve el último snapshot que capturó el poller, nunca consulta la fuente
 directamente. Tres endpoints:
 
 - `GET /bays/live`        estado de cada plaza con su bandera de fiabilidad
+- `GET /predict`          probabilidad de encontrar sitio al llegar, por zona
 - `GET /zones/coverage`   cobertura por zona, para saber dónde no hay datos
 - `GET /health`           si los datos que sirve están frescos
 
@@ -19,17 +20,24 @@ import polars as pl
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 
+from parking.api.prediction import (
+    MODEL_CAVEAT,
+    PredictionService,
+    PredictionUnavailableError,
+)
 from parking.api.repository import LiveSnapshot, NoSnapshotError, SnapshotRepository
 from parking.api.schemas import (
     Bay,
     BayState,
     HealthResponse,
     LiveResponse,
+    PredictResponse,
     Quality,
     QualityBreakdown,
     SnapshotInfo,
     Summary,
     ZoneCoverage,
+    ZonePrediction,
     ZonesResponse,
 )
 from parking.config import Settings, get_settings
@@ -52,11 +60,17 @@ def get_repository(request: Request) -> SnapshotRepository:
     return request.app.state.repository
 
 
+def get_predictor(request: Request) -> PredictionService:
+    """Servicio de predicción compartido, con su caché de features."""
+    return request.app.state.predictor
+
+
 # A nivel de módulo a propósito: con `from __future__ import annotations` las
 # anotaciones son cadenas y FastAPI las resuelve contra los globales del módulo.
 # Definido dentro de `create_app` sería invisible para él y las rutas pedirían
 # `repository` como parámetro de query.
 RepositoryDep = Annotated[SnapshotRepository, Depends(get_repository)]
+PredictorDep = Annotated[PredictionService, Depends(get_predictor)]
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -75,6 +89,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.repository = repository
+    app.state.predictor = PredictionService(settings)
 
     def _snapshot_info(snapshot: LiveSnapshot) -> SnapshotInfo:
         age = snapshot.meta.age_seconds
@@ -142,6 +157,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             attribution=ATTRIBUTION,
         )
 
+    @app.get("/predict", response_model=PredictResponse, tags=["prediccion"])
+    def predict(
+        repository: RepositoryDep,
+        predictor: PredictorDep,
+        lat: Annotated[float, Query(ge=-90, le=90, description="Latitud del destino")],
+        lon: Annotated[float, Query(ge=-180, le=180, description="Longitud del destino")],
+        eta_minutes: Annotated[
+            float,
+            Query(
+                ge=0,
+                le=120,
+                description="Minutos hasta la llegada. Se ajusta al horizonte "
+                "entrenado mas cercano (5, 10, 15 o 30).",
+            ),
+        ] = 15,
+        radius_m: Annotated[float, Query(ge=50, le=3000)] = 500,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    ) -> PredictResponse:
+        """Probabilidad de encontrar plaza en las zonas cercanas al destino.
+
+        Devuelve **varias zonas y no la mejor**: señalar una sola mandaría a
+        todo el que pregunte al mismo hueco. Van ordenadas por distancia, no
+        por probabilidad, por la misma razón.
+        """
+        snapshot = _load(repository)
+        try:
+            horizon, zones = predictor.predict_near(
+                lat, lon, eta_minutes, radius_m=radius_m, limit=limit
+            )
+        except PredictionUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        return PredictResponse(
+            snapshot=_snapshot_info(snapshot),
+            eta_minutes=eta_minutes,
+            horizon_minutes=horizon,
+            zones=[
+                ZonePrediction(
+                    segment_id=zone.segment_id,
+                    label=_segment_label(zone.segment_id),
+                    probability=round(zone.probability, 4),
+                    free_bays=zone.free_bays,
+                    total_bays=zone.total_bays,
+                    latitude=zone.latitude,
+                    longitude=zone.longitude,
+                    distance_m=zone.distance_m,
+                    is_interpolated=zone.is_interpolated,
+                )
+                for zone in zones
+            ],
+            model_caveat=MODEL_CAVEAT,
+            attribution=ATTRIBUTION,
+        )
+
     @app.get("/zones/coverage", response_model=ZonesResponse, tags=["calidad"])
     def zones_coverage(
         repository: RepositoryDep,
@@ -206,6 +275,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logger.warning("no existe %s; el frontend no se sirve", settings.web_dir)
 
     return app
+
+
+def _segment_label(segment_id: str) -> str:
+    """`COLLINS STREET|EXHIBITION STREET|RUSSELL STREET` -> texto legible."""
+    parts = segment_id.split("|")
+    if len(parts) != 3:
+        return segment_id
+    street, first, second = (part.title() for part in parts)
+    return f"{street}, entre {first} y {second}"
 
 
 def _bay_state(is_reliable: bool, is_occupied: bool) -> BayState:
