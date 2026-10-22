@@ -1,241 +1,241 @@
-# Esquema de datos
+# Data schema
 
-Verificado contra la API real de
-[City of Melbourne Open Data](https://data.melbourne.vic.gov.au/) el **2026-10-22**.
-Todos los campos y endpoints de este documento se han comprobado ejecutando las
-consultas; ninguno está supuesto (regla 2 del plan). Datos bajo licencia CC BY 4.0.
+Verified against the live
+[City of Melbourne Open Data](https://data.melbourne.vic.gov.au/) API on
+**2026-10-22**. Every field and endpoint in this document was checked by
+running the queries; none is assumed (plan rule 2). Data under CC BY 4.0.
 
-La API es una instancia de **Opendatasoft Explore v2.1**:
+The API is an **Opendatasoft Explore v2.1** instance:
 
 ```
 https://data.melbourne.vic.gov.au/api/explore/v2.1/catalog/datasets/{dataset_id}
 ```
 
-## 1. Tiempo real: `on-street-parking-bay-sensors`
+## 1. Real time: `on-street-parking-bay-sensors`
 
-Sensores de suelo en bahías del CBD. **6324 registros**, uno por plaza. El
-dataset se **sobreescribe** en cada actualización: es una foto del estado
-actual, no una serie temporal. Conservar la historia es precisamente el trabajo
-del poller.
+In-ground sensors in CBD bays. **6324 records**, one per bay. The dataset is
+**overwritten** on every update: it is a snapshot of the current state, not a
+time series. Preserving the history is exactly the poller's job.
 
-### Campos
+### Fields
 
-| Campo | Tipo API | Semántica verificada |
+| Field | API type | Verified semantics |
 |---|---|---|
-| `kerbsideid` | `int` | Identificador de la plaza. **Clave única**: 6324 valores distintos en 6324 filas, 0 duplicados, 0 nulos. Rango observado [5691, 90812]. |
-| `status_description` | `text` | Solo dos valores: `Present` y `Unoccupied`. 0 nulos. Ver §1.1. |
-| `status_timestamp` | `datetime` (UTC) | Instante del **último cambio de estado** de esa plaza. 0 nulos. |
-| `lastupdated` | `datetime` (UTC) | Instante del **último lote del feed** en que apareció la plaza. 0 nulos. Ver §1.2. |
-| `zone_number` | `int` | Zona de restricción (`parkingzone` en otros datasets). 536 zonas distintas, rango [7001, 7996], **520 nulos (8,2 %)**. |
-| `location` | `geo_point_2d` | Coordenadas de la plaza. 0 nulos. El formato depende del endpoint, ver §1.3. |
+| `kerbsideid` | `int` | Bay identifier. **Unique key**: 6324 distinct values in 6324 rows, 0 duplicates, 0 nulls. Observed range [5691, 90812]. |
+| `status_description` | `text` | Only two values: `Present` and `Unoccupied`. 0 nulls. See §1.1. |
+| `status_timestamp` | `datetime` (UTC) | Instant of the **last state change** for that bay. 0 nulls. |
+| `lastupdated` | `datetime` (UTC) | Instant of the **last feed batch** the bay appeared in. 0 nulls. See §1.2. |
+| `zone_number` | `int` | Restriction zone (`parkingzone` in other datasets). 536 distinct zones, range [7001, 7996], **520 nulls (8.2%)**. |
+| `location` | `geo_point_2d` | Bay coordinates. 0 nulls. The format depends on the endpoint, see §1.3. |
 
-### 1.1 Trampa de nomenclatura: `Present` significa ocupada
+### 1.1 Naming trap: `Present` means occupied
 
-`status_description` describe el **coche**, no la plaza:
+`status_description` describes the **car**, not the bay:
 
-- `Present` → hay un coche → la plaza está **OCUPADA** (3581 filas, 56,7 %)
-- `Unoccupied` → no hay coche → la plaza está **LIBRE** (2743 filas, 43,3 %)
+- `Present` -> a car is there -> the bay is **OCCUPIED** (3581 rows, 56.7%)
+- `Unoccupied` -> no car -> the bay is **FREE** (2743 rows, 43.3%)
 
-Ese 56,7 % es el reparto crudo de las 6324 filas en un instante concreto, no la
-ocupación del parque: incluye sensores caídos y atascados. La cifra utilizable
-se calcula solo sobre lecturas fiables y se mueve con la hora del día; ver
+That 56.7% is the raw split of the 6324 rows at one instant, not the fleet's
+occupancy: it includes offline and stuck sensors. The usable figure is computed
+over reliable readings only and moves with the time of day; see
 [`data_quality.md`](data_quality.md).
 
-Es un error fácil de cometer y silencioso: invierte el target del modelo sin
-provocar ningún fallo. La ingesta normaliza a un booleano explícito
-`is_occupied` y la cadena cruda no llega nunca a las features.
+This is an easy mistake and a silent one: it inverts the model's target without
+anything failing. Ingestion normalises to an explicit `is_occupied` boolean and
+the raw string never reaches the features.
 
-### 1.2 Los dos timestamps no son lo mismo
+### 1.2 The two timestamps are not the same thing
 
-Es el hallazgo principal de la Fase 1 y condiciona toda la Fase 2.
+This is phase 1's main finding and it shapes all of phase 2.
 
-**`lastupdated` es un sello del lote, no del sensor.** Sobre los 6324 registros
-hay solo **49 valores distintos**, y uno cubre 5264 plazas
-(`2026-10-22T09:26:50Z` en la medición). La publicación va por relés de red:
-cada ciclo reescribe el dataset y todas las plazas que reportaron reciben el
-**mismo** `lastupdated`. Una plaza que deja de reportar se queda **congelada**
-con el sello del último lote en que apareció.
+**`lastupdated` is a batch stamp, not a per-sensor one.** Across the 6324
+records there are only **49 distinct values**, and one of them covers 5264 bays
+(`2026-10-22T09:26:50Z` at measurement time). Publication goes through network
+relays: each cycle rewrites the dataset and every bay that reported receives the
+**same** `lastupdated`. A bay that stops reporting stays **frozen** with the
+stamp of the last batch it appeared in.
 
-Eso convierte la detección de sensores caídos en una regla exacta en lugar de
-una heurística de umbral:
+That turns offline-sensor detection into an exact rule rather than a threshold
+heuristic:
 
 ```
-sensor_vivo  ⟺  lastupdated == max(lastupdated) del snapshot
+sensor_live  <=>  lastupdated == max(lastupdated) in the snapshot
 ```
 
-Los 49 valores distintos son "cohortes de caída": grupos de sensores que
-desaparecieron en el mismo ciclo (83 plazas el 2025-10-30, 79 el 2026-01-15, 70
-el 2026-07-22…). Que caigan en bloque apunta a relés enteros, no a fallos de
-sensor individuales — una distinción útil para el informe de calidad.
+The 49 distinct values are "death cohorts": groups of sensors that dropped out
+in the same cycle (83 bays on 2025-10-30, 79 on 2026-01-15, 70 on 2026-07-22,
+and so on). Failing in blocks points at whole relays rather than individual
+sensors - a useful distinction for the quality report.
 
-Antigüedad de `lastupdated` medida el 2026-10-22:
+Age of `lastupdated` measured on 2026-10-22:
 
-| Antigüedad | Plazas | % |
+| Age | Bays | % |
 |---|---|---|
-| ≤ 15 min | 5264 | 83,2 % |
-| ≤ 24 h | 5264 | 83,2 % |
-| ≤ 7 d | 5284 | 83,6 % |
-| ≤ 30 d | 5345 | 84,5 % |
-| **> 30 d** | **979** | **15,5 %** |
+| <= 15 min | 5264 | 83.2% |
+| <= 24 h | 5264 | 83.2% |
+| <= 7 d | 5284 | 83.6% |
+| <= 30 d | 5345 | 84.5% |
+| **> 30 d** | **979** | **15.5%** |
 
-**El parque útil es de ~5264 plazas, no 6324.** Las 979 con más de 30 días son
-sensores retirados o permanentemente caídos que el dataset no purga. Cualquier
-métrica de ocupación calculada sobre las 6324 está sesgada.
+**The usable fleet is ~5264 bays, not 6324.** The 979 older than 30 days are
+decommissioned or permanently dead sensors the dataset never purges. Any
+occupancy metric computed over all 6324 is biased.
 
-**`status_timestamp` es por plaza** y marca el último cambio de estado. Mediana
-de 4,0 h; solo el 8,8 % cambió en los últimos 15 min. Su antigüedad **no**
-indica avería: una plaza legítimamente ocupada toda la noche tiene
-`status_timestamp` viejo y `lastupdated` fresco. Confundir ambos campos es el
-error que la Fase 2 tiene que evitar — y es la razón de documentarlos por
-separado aquí.
+**`status_timestamp` is per bay** and marks the last state change. Median 4.0 h;
+only 8.8% changed in the last 15 min. Its age does **not** indicate a fault: a
+bay legitimately occupied all night has an old `status_timestamp` and a fresh
+`lastupdated`. Confusing the two is the mistake phase 2 has to avoid - and the
+reason they are documented separately here.
 
-| Antigüedad de `status_timestamp` | Plazas | % |
+| Age of `status_timestamp` | Bays | % |
 |---|---|---|
-| ≤ 15 min | 558 | 8,8 % |
-| ≤ 1 h | 1531 | 24,2 % |
-| ≤ 6 h | 3328 | 52,6 % |
-| ≤ 24 h | 3556 | 56,2 % |
-| > 30 d | 2427 | 38,4 % |
+| <= 15 min | 558 | 8.8% |
+| <= 1 h | 1531 | 24.2% |
+| <= 6 h | 3328 | 52.6% |
+| <= 24 h | 3556 | 56.2% |
+| > 30 d | 2427 | 38.4% |
 
-La propia fuente avala vigilar `lastupdated`; su descripción dice:
+The source itself endorses watching `lastupdated`; its description says:
 
 > This dataset is updated through network relays and can be disrupted causing
 > delays in data updates. Users of this data are encouraged to monitor the
 > dataset's last updated timestamp (Lastupdated column) to check for delays in
 > the data being updated.
 
-### 1.3 Endpoint elegido para el poller
+### 1.3 Endpoint chosen for the poller
 
-Tres formas de leer el dataset, con diferencias que importan:
+Three ways to read the dataset, with differences that matter:
 
-| Endpoint | Peticiones/snapshot | `location` | Veredicto |
+| Endpoint | Requests per snapshot | `location` | Verdict |
 |---|---|---|---|
-| `/records?limit=100` | 64 (paginado, tope 100/req) | `{"lon":…,"lat":…}` | Descartado: 64 peticiones por snapshot |
-| `/exports/parquet?limit=-1` | 1 (204 KB) | **`Binary` (WKB)** | Descartado: obliga a decodificar geometría |
-| **`/exports/json?limit=-1`** | **1 (1,5 MB)** | `{"lon":…,"lat":…}` | **Elegido** |
+| `/records?limit=100` | 64 (paginated, 100/req cap) | `{"lon":…,"lat":…}` | Rejected: 64 requests per snapshot |
+| `/exports/parquet?limit=-1` | 1 (204 KB) | **`Binary` (WKB)** | Rejected: forces geometry decoding |
+| **`/exports/json?limit=-1`** | **1 (1.5 MB)** | `{"lon":…,"lat":…}` | **Chosen** |
 
-`/exports/json?limit=-1` devuelve los 6324 registros en **una sola petición** con
-coordenadas ya en lon/lat. A 5 min por snapshot son 288 peticiones al día,
-holgado para cualquier límite razonable.
+`/exports/json?limit=-1` returns all 6324 records in **a single request** with
+coordinates already as lon/lat. At one snapshot every 5 min that is 288 requests
+a day, comfortable for any reasonable limit.
 
-Que el export Parquet entregue `location` como `Binary` (WKB) es la razón de no
-usarlo, aunque el almacenamiento local sí sea Parquet.
+The Parquet export delivering `location` as `Binary` (WKB) is the reason not to
+use it, even though local storage is Parquet.
 
-Bounding box de los sensores (medido): lon [144.93644, 144.98861], lat
-[-37.84824, -37.79491] — unos 4,6 × 5,9 km del centro de Melbourne.
+Sensor bounding box (measured): lon [144.93644, 144.98861], lat
+[-37.84824, -37.79491] - roughly 4.6 x 5.9 km of central Melbourne.
 
-## 2. Datasets auxiliares (consultables por API)
+## 2. Supporting datasets (API-queryable)
 
-### `on-street-parking-bays` — geometría de bahías
+### `on-street-parking-bays` - bay geometry
 
-29 053 filas. Campos: `roadsegmentid` (int), `kerbsideid` (**text**),
+29,053 rows. Fields: `roadsegmentid` (int), `kerbsideid` (**text**),
 `roadsegmentdescription` (text), `latitude`, `longitude`, `lastupdated`,
 `location`.
 
-Tres avisos verificados:
+Three verified warnings:
 
-- `kerbsideid` es **texto aquí** y `int` en el dataset de sensores. Hay que
-  castear para cruzar.
-- **23 981 de 29 053 filas (82,5 %) tienen `kerbsideid` vacío.** Solo 5070 lo
-  traen, cifra coherente con las ~5264 plazas con sensor vivo: la mayoría del
-  inventario de bahías no está sensorizada.
-- Dos filas (`7568N`, `7570N`) traen un sufijo de letra que rompe el formato
-  numérico. Son anomalías puntuales, no un patrón.
+- `kerbsideid` is **text here** and `int` in the sensor dataset. It has to be
+  cast before joining.
+- **23,981 of 29,053 rows (82.5%) have an empty `kerbsideid`.** Only 5070 carry
+  one, consistent with the ~5264 bays with a live sensor: most of the bay
+  inventory is not instrumented.
+- Two rows (`7568N`, `7570N`) carry a letter suffix that breaks the numeric
+  format. They are one-off anomalies, not a pattern.
 
-`roadsegmentdescription` sigue el formato `"X Street between A Street and B
-Street"`, que es la clave del cruce con el histórico (ver
-[`id_crosswalk.md`](id_crosswalk.md)). 1035 de 29 053 descripciones no encajan
-en ese patrón.
+`roadsegmentdescription` follows the format `"X Street between A Street and B
+Street"`, which is the key to joining against the historical archive (see
+[`id_crosswalk.md`](id_crosswalk.md)). 1035 of the 29,053 descriptions do not
+match that pattern.
 
-Aporta `roadsegmentid`, la unidad natural de "tramo de calle" para la Fase 4.
+It provides `roadsegmentid`, the natural "street segment" unit for phase 4.
 
-### `on-street-car-park-bay-restrictions` — restricciones por plaza
+### `on-street-car-park-bay-restrictions` - per-bay restrictions
 
-4263 filas. Claves **`bayid`** y **`deviceid`** (ambos int), seguidas de seis
-bloques repetidos de restricción: `description1..6`, `typedesc1..6`,
+4263 rows. Keys **`bayid`** and **`deviceid`** (both int), followed by six
+repeating restriction blocks: `description1..6`, `typedesc1..6`,
 `duration1..6`, `starttime1..6`, `endtime1..6`, `fromday1..6`, `today1..6`,
 `effectiveonph1..6`, `disabilityext1..6`, `exemption1..6`.
 
-Ejemplo real:
+Real example:
 `{bayid: 9003, deviceid: 29960, description1: "4P MTR M-F 10:00-18:30",
 typedesc1: "4P Meter", duration1: 240}`.
 
-**No contiene `kerbsideid`**, y eso es el centro del problema de cruce.
+**It does not contain `kerbsideid`**, and that is the heart of the crosswalk
+problem.
 
-### Otros
+### Others
 
-- `sign-plates-located-in-each-parking-zone` (1821 filas): `parkingzone` +
+- `sign-plates-located-in-each-parking-zone` (1821 rows): `parkingzone` plus
   `restriction_days`, `time_restrictions_start/finish`, `restriction_display`.
-  Cruza con `zone_number` del tiempo real.
-- `parking-zones-linked-to-street-segments`: `parkingzone` → tramos de calle.
+  Joins against `zone_number` from the real-time feed.
+- `parking-zones-linked-to-street-segments`: `parkingzone` -> street segments.
 
-## 3. Histórico anual de sensores
+## 3. Yearly sensor archive
 
-### No es consultable por la API
+### Not queryable through the API
 
-Los diez datasets históricos (`on-street-car-parking-sensor-data-2011` … `-2019`
-y `-2020-jan-may`) tienen todos **`has_records: false` y `records_count: 0`**:
-la API no sirve sus filas. Solo existen como ZIP de archivo enlazado desde la
-descripción HTML del dataset. Para 2019:
+All ten historical datasets (`on-street-car-parking-sensor-data-2011` …
+`-2019` and `-2020-jan-may`) have **`has_records: false` and
+`records_count: 0`**: the API does not serve their rows. They only exist as
+archive ZIPs linked from the dataset's HTML description. For 2019:
 
 ```
 https://opendatasoft-s3.s3.amazonaws.com/downloads/archive/7pgd-bdf2.zip
 ```
 
-717 085 379 bytes (717 MB), 42,7 millones de filas, un único CSV dentro:
+717,085,379 bytes (717 MB), 42.7 million rows, a single CSV inside:
 `On-street_Car_Parking_Sensor_Data_-_2019.csv`.
 
-El S3 responde `Accept-Ranges: bytes`, así que el esquema se verificó con una
-petición `Range` inflando solo el prefijo del stream deflate, sin descargar el
-fichero entero. El mismo mecanismo da reanudación gratis al descargador.
+S3 answers with `Accept-Ranges: bytes`, so the schema was verified with a
+`Range` request that inflated only the prefix of the deflate stream, without
+downloading the whole file. The same mechanism gives the downloader resumption
+for free.
 
-Nota: la serie termina en mayo de 2020. No hay histórico publicado de 2021 en
-adelante, aunque el feed en tiempo real sigue vivo.
+Note: the series ends in May 2020. No archive has been published from 2021
+onwards, even though the real-time feed is still live.
 
-### Campos (20, verificados sobre el CSV real)
+### Fields (20, verified against the real CSV)
 
-| Campo | Ejemplo | Notas |
+| Field | Example | Notes |
 |---|---|---|
-| `DeviceId` | `23915` | Identificador del sensor |
-| `ArrivalTime` | `11/03/2019 03:00:56 AM` | **Formato US `MM/DD/YYYY hh:mm:ss AM/PM`**, hora local de Melbourne |
-| `DepartureTime` | `11/03/2019 03:07:26 AM` | Igual formato |
-| `DurationMinutes` | `7` | Redondeado: 6 min 30 s se publica como `7` |
-| `StreetMarker` | `2374N` | Marca física en calzada: dígitos + letra de orientación |
-| `SignPlateID` | `287` | A menudo vacío |
-| `Sign` | `1P MTR M-SAT 7:30-18:30` | Restricción en texto; a menudo vacío |
-| `AreaName` | `Windsor`, `Banks` | Nombre de área |
+| `DeviceId` | `23915` | Sensor identifier |
+| `ArrivalTime` | `11/03/2019 03:00:56 AM` | **US format `MM/DD/YYYY hh:mm:ss AM/PM`**, Melbourne local time |
+| `DepartureTime` | `11/03/2019 03:07:26 AM` | Same format |
+| `DurationMinutes` | `7` | Rounded: 6 min 30 s is published as `7` |
+| `StreetMarker` | `2374N` | Physical kerb marker: digits plus an orientation letter |
+| `SignPlateID` | `287` | Often empty |
+| `Sign` | `1P MTR M-SAT 7:30-18:30` | Restriction as free text; often empty |
+| `AreaName` | `Windsor`, `Banks` | Area name |
 | `StreetId` / `StreetName` | `123` / `BOURKE STREET` | |
-| `BetweenStreet1ID` / `BetweenStreet1` | `1221` / `RUSSELL STREET` | Tramo entre dos calles |
+| `BetweenStreet1ID` / `BetweenStreet1` | `1221` / `RUSSELL STREET` | Segment between two streets |
 | `BetweenStreet2ID` / `BetweenStreet2` | `647` / `EXHIBITION STREET` | |
 | `SideOfStreet` / `SideOfStreetCode` / `SideName` | `3` / `N` / `North` | |
-| `BayId` | `1753` | Identificador de bahía |
-| `InViolation` | `false` | Excedió la restricción |
+| `BayId` | `1753` | Bay identifier |
+| `InViolation` | `false` | Overstayed the restriction |
 | `VehiclePresent` | `false` | |
 
-Puntos críticos al parsear:
+Critical points when parsing:
 
-- **Fechas en formato US.** `11/03/2019` es el 3 de noviembre, no el 11 de
-  marzo. Parsear con `%m/%d/%Y %I:%M:%S %p` explícito, nunca con inferencia
-  automática: una inferencia que acierte en los primeros registros fallará en
-  silencio en los días ≤ 12.
-- **Sin zona horaria.** Es hora local de Melbourne (`Australia/Melbourne`) con
-  horario de verano: en las transiciones hay instantes ambiguos y otros
-  inexistentes. Convertir a UTC requiere decidir explícitamente qué hacer con
-  ellos.
-- **Es un esquema de eventos, no de snapshots.** Cada fila es una estancia
-  (llegada → salida). Reconstruir la ocupación en un instante dado exige pasar
-  de eventos a serie temporal: trabajo de la Fase 4.
-- **Sin coordenadas.** Ninguna columna de latitud/longitud. Es el núcleo del
-  problema de cruce.
-- El fichero viene **ordenado por `DeviceId`**, no por tiempo. Un prefijo del
-  fichero no es una muestra temporal representativa, sino un subconjunto de
-  sensores: relevante al muestrear para EDA.
+- **US date format.** `11/03/2019` is 3 November, not 11 March. Parse with an
+  explicit `%m/%d/%Y %I:%M:%S %p`, never with automatic inference: inference
+  that succeeds on the first records will fail silently on days <= 12.
+- **No timezone.** It is Melbourne local time (`Australia/Melbourne`) with
+  daylight saving: the transitions contain ambiguous and non-existent instants.
+  Converting to UTC requires an explicit decision about them.
+- **It is an interval schema, not snapshots.** Each row is one interval
+  (arrival -> departure). Reconstructing occupancy at a given instant means
+  going from events to a time series: phase 4's job.
+- **`VehiclePresent` decides what each interval is**, and misreading it ruins
+  the dataset. See [`dataset.md`](dataset.md).
+- **No coordinates.** No latitude or longitude column at all. This is the core
+  of the crosswalk problem.
+- The file is **sorted by `DeviceId`**, not by time. A prefix of the file is not
+  a representative temporal sample but a subset of sensors: relevant when
+  sampling for EDA.
 
-## 4. El cruce histórico ↔ tiempo real
+## 4. The historical <-> real-time crosswalk
 
-Resultado en el informe dedicado: [`docs/id_crosswalk.md`](id_crosswalk.md).
+Result in its own report: [`docs/id_crosswalk.md`](id_crosswalk.md).
 
-## Atribución
+## Attribution
 
-Datos de [City of Melbourne Open Data](https://data.melbourne.vic.gov.au/),
-licencia [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Data from [City of Melbourne Open Data](https://data.melbourne.vic.gov.au/),
+licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

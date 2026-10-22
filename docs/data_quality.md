@@ -1,48 +1,48 @@
-# Calidad de los datos de sensores
+# Sensor data quality
 
-Informe de la Fase 2. Cifras medidas sobre el snapshot de
-**2026-10-22 11:46:49 UTC** salvo donde se indique otra cosa, y recalculables con:
+Phase 2 report. Figures measured on the snapshot of
+**2026-10-22 11:46:49 UTC** unless stated otherwise, and recomputable with:
 
 ```bash
 uv run python scripts/quality_report.py
 ```
 
-## Resumen
+## Summary
 
-**De las 6324 plazas que publica el feed, solo 3557 (56,2 %) dan una lectura
-utilizable.** Las otras 2767 fallan de dos maneras distintas, que hay que
-separar porque tienen causas y consecuencias diferentes.
+**Of the 6324 bays the feed publishes, only 3557 (56.2%) give a usable
+reading.** The other 2767 fail in two distinct ways, which have to be kept
+apart because their causes and consequences differ.
 
-| Estado | Plazas | % | Ocupación aparente |
+| State | Bays | % | Apparent occupancy |
 |---|---|---|---|
-| `ok` — reporta y cambia de estado | 3557 | 56,2 % | 44,5 % |
-| `stuck` — reporta pero congelado | 1707 | 27,0 % | 39,3 % |
-| `offline` — ausente del lote del feed | 1060 | 16,8 % | 53,9 % |
+| `ok` - reports and changes state | 3557 | 56.2% | 44.5% |
+| `stuck` - reports but frozen | 1707 | 27.0% | 39.3% |
+| `offline` - absent from the feed batch | 1060 | 16.8% | 53.9% |
 
-## 1. Los dos modos de fallo
+## 1. The two failure modes
 
-### `offline`: el relé no reporta
+### `offline`: the relay is not reporting
 
-Detección **exacta**, sin umbral: `lastupdated < max(lastupdated)` del snapshot.
-Como `lastupdated` es el sello del lote y no del sensor
-(`docs/data_schema.md` §1.2), una plaza que no aparece en el lote actual arrastra
-el sello del último en que estuvo.
+**Exact** detection, no threshold: `lastupdated < max(lastupdated)` within the
+snapshot. Because `lastupdated` is a batch stamp rather than a per-sensor one
+(`docs/data_schema.md` §1.2), a bay that is not in the current batch carries
+the stamp of the last one it appeared in.
 
-### `stuck`: el sensor está congelado
+### `stuck`: the sensor is frozen
 
-Es el fallo **más numeroso y el que no se ve** si solo se vigila `lastupdated`,
-que es lo que recomienda la documentación de la fuente. La plaza sí está en el
-lote actual —el relé la reporta— pero su `status_timestamp` no se mueve desde
-hace una eternidad: **mediana de 150 días**, con casos de hasta **1432 días**
-(casi cuatro años).
+This is the **more numerous failure and the invisible one** if you only watch
+`lastupdated`, which is what the source's own documentation recommends. The bay
+*is* in the current batch - the relay reports it - but its `status_timestamp`
+has not moved in an age: **median 150 days**, with cases up to **1432 days**
+(nearly four years).
 
-1707 plazas, el **32,4 % de las que están en línea**. Ignorarlo significaría
-tratar como buenas 1707 lecturas que llevan meses siendo la misma.
+1707 bays, **32.4% of those online**. Ignoring it would mean treating as good
+1707 readings that have been the same for months.
 
-## 2. El umbral de 24 h sale del dato, no de una corazonada
+## 2. The 24 h threshold comes from the data, not a hunch
 
-La antigüedad de `status_timestamp` entre sensores en línea es claramente
-**bimodal**, y el umbral se pone en el valle:
+The age of `status_timestamp` among online sensors is clearly **bimodal**, and
+the threshold sits in the valley:
 
 ```
   0-1h          1584  ###############################################################
@@ -51,7 +51,7 @@ La antigüedad de `status_timestamp` entre sensores en línea es claramente
   4-8h           421  ################
   8-12h          125  #####
   12-18h          64  ##
-  18-24h          12            <-- valle: 12 plazas de 5264
+  18-24h          12            <-- valley: 12 bays out of 5264
   24-48h          59  ##
   48-72h          22
   72-168h         43  #
@@ -62,145 +62,144 @@ La antigüedad de `status_timestamp` entre sensores en línea es claramente
   >8760h         507  ####################
 ```
 
-El modo sano se agota hacia las 12 h, la franja 18-24 h está casi vacía, y a
-partir de 720 h (30 días) aparece el segundo modo. Cualquier corte entre 18 y 24
-horas separa las dos poblaciones; se elige 24 h por ser el ciclo natural de
-rotación de un aparcamiento.
+The healthy mode tails off around 12 h, the 18-24 h band is almost empty, and
+from 720 h (30 days) onwards a second mode appears. Any cut between 18 and 24
+hours separates the two populations; 24 h is chosen because it is a parking
+lot's natural turnover cycle.
 
-La elección además **apenas mueve el resultado**, que es la señal de que el
-umbral cae en un valle y no en una pendiente:
+The choice also **barely moves the result**, which is the sign that the
+threshold falls in a valley rather than on a slope:
 
-| Umbral | Plazas fiables | Cobertura | Ocupación |
+| Threshold | Reliable bays | Coverage | Occupancy |
 |---|---|---|---|
-| 6 h | 3227 | 51,0 % | 44,4 % |
-| 12 h | 3482 | 55,1 % | 44,6 % |
-| 18 h | 3545 | 56,1 % | 44,5 % |
-| **24 h** | **3557** | **56,2 %** | **44,5 %** |
-| 48 h | 3616 | 57,2 % | 44,6 % |
-| 7 d | 3681 | 58,2 % | 44,7 % |
-| 30 d | 3881 | 61,4 % | 44,2 % |
+| 6 h | 3227 | 51.0% | 44.4% |
+| 12 h | 3482 | 55.1% | 44.6% |
+| 18 h | 3545 | 56.1% | 44.5% |
+| **24 h** | **3557** | **56.2%** | **44.5%** |
+| 48 h | 3616 | 57.2% | 44.6% |
+| 7 d | 3681 | 58.2% | 44.7% |
+| 30 d | 3881 | 61.4% | 44.2% |
 
-Configurable en `PARKING_STUCK_AFTER_HOURS`.
+Configurable through `PARKING_STUCK_AFTER_HOURS`.
 
-**Falso positivo conocido:** una plaza sin restricción horaria legítimamente
-ocupada más de 24 h se marcaría como atascada. Dos cosas acotan el riesgo: la
-mediana de los marcados es de 150 días, muy lejos de una estancia larga
-plausible; y el 60,7 % de los atascados aparecen **libres**, y una plaza libre
-durante meses en el CBD de Melbourne no es una estancia larga, es un sensor
-muerto. Con los datos del histórico y las restricciones por plaza
-(`on-street-car-park-bay-restrictions`, campo `duration1..6`) se podría afinar
-el umbral por tipo de restricción; queda pendiente y no bloquea la Fase 3.
+**Known false positive:** a bay with no time restriction and legitimately
+occupied for more than 24 h would be marked stuck. Two things bound the risk:
+the median of the flagged bays is 150 days, far beyond any plausible long stay;
+and 60.7% of the stuck ones appear **free**, and a bay free for months in
+Melbourne's CBD is not a long stay, it is a dead sensor. With the archive and
+the per-bay restrictions (`on-street-car-park-bay-restrictions`, field
+`duration1..6`) the threshold could be tuned per restriction type; that is
+pending and does not block phase 3.
 
-## 3. El sesgo de no filtrar no es constante (y es peor en hora punta)
+## 3. The bias of not filtering is not constant (and is worst at peak)
 
-Esto corrige una estimación preliminar que comparaba snapshots de horas
-distintas y daba una cifra fija de ~12 puntos. Medido **dentro de cada
-snapshot**, el sesgo varía:
+This corrects a preliminary estimate that compared snapshots from different
+hours and produced a fixed figure of ~12 points. Measured **within each
+snapshot**, the bias varies:
 
-| Snapshot (UTC) | Todas las plazas | Solo fiables | Sesgo |
+| Snapshot (UTC) | All bays | Reliable only | Bias |
 |---|---|---|---|
-| 10:04:49 | 54,7 % | 62,3 % | **+7,6 pts** |
-| 10:22:49 | 53,6 % | 60,5 % | +6,9 pts |
-| 11:42:49 | 45,0 % | 45,0 % | 0,0 pts |
-| 11:44:49 | 44,7 % | 44,5 % | −0,1 pts |
-| 11:46:49 | 44,7 % | 44,5 % | −0,1 pts |
+| 10:04:49 | 54.7% | 62.3% | **+7.6 pts** |
+| 10:22:49 | 53.6% | 60.5% | +6.9 pts |
+| 11:42:49 | 45.0% | 45.0% | 0.0 pts |
+| 11:44:49 | 44.7% | 44.5% | -0.1 pts |
+| 11:46:49 | 44.7% | 44.5% | -0.1 pts |
 
-La razón es mecánica y hace el problema predecible: **las lecturas atascadas
-tienen una ocupación congelada en torno al 39,3 % que no sigue el ciclo
-diario.** Al promediarlas con las buenas, tiran de la media hacia ese 39,3 %.
-El sesgo es entonces proporcional a la distancia entre la ocupación real y
-39,3 %: casi nulo cuando el parque ronda ese valor (como a las 11:46) y máximo
-cuando el CBD está lleno.
+The reason is mechanical, which makes the problem predictable: **stuck readings
+carry a frozen occupancy of around 39.3% that does not follow the daily cycle.**
+Averaging them in pulls the mean towards that 39.3%. The bias is therefore
+proportional to the distance between true occupancy and 39.3%: almost nil when
+the fleet sits near that value (as at 11:46) and largest when the CBD is full.
 
-Es decir, **el sesgo es peor justo en hora punta, que es cuando la predicción
-importa.** Motivo suficiente para que `is_reliable` sea obligatorio en las
-features y no una opción.
+In other words, **the bias is worst exactly at peak hours, which is when the
+prediction matters.** That is reason enough for `is_reliable` to be mandatory
+in features and metrics rather than optional.
 
-## 4. Los fallos son de relé, no de sensor
+## 4. The failures are relay-level, not sensor-level
 
-Si los sensores fallaran de forma independiente, una zona tendría una mezcla de
-estados. Lo que se observa es lo contrario:
+If sensors failed independently, a zone would show a mix of states. What is
+observed is the opposite:
 
-| | Zonas |
+| | Zones |
 |---|---|
-| Zonas con ≥ 5 plazas | 368 |
-| **Enteramente fuera de línea** | **37** |
-| **Enteramente atascadas** | **44** |
+| Zones with >= 5 bays | 368 |
+| **Entirely offline** | **37** |
+| **Entirely stuck** | **44** |
 
-**81 zonas (22 %) fallan en bloque.** Coincide con lo visto en
-`docs/data_schema.md` §1.2: los 49 valores distintos de `lastupdated` son
-cohortes de caída, grupos de plazas que desaparecieron en el mismo ciclo.
+**81 zones (22%) fail as a block.** This matches what `docs/data_schema.md`
+§1.2 showed: the 49 distinct `lastupdated` values are death cohorts, groups of
+bays that disappeared in the same cycle.
 
-Consecuencia para el producto: la unidad de fallo es la zona, así que la
-degradación no es gradual sino a saltos. Una zona no pierde fiabilidad poco a
-poco; se apaga entera. El mapa de la Fase 3 debe poder decir **"sin datos en
-esta zona"** como un estado de primera clase, no pintar una zona vacía como si
-estuviera libre.
+Consequence for the product: the failure unit is the zone, so degradation is
+not gradual but stepwise. A zone does not slowly lose reliability; it goes dark
+all at once. Phase 3's map must be able to say **"no data in this zone"** as a
+first-class state, rather than painting an empty zone as if it were free.
 
-## 5. Cobertura por zona
+## 5. Coverage per zone
 
-Sobre las 191 zonas con al menos 10 plazas:
+Across the 191 zones with at least 10 bays:
 
-- Cobertura **mediana: 72,2 %**
-- **56 zonas (29 %) están al 0 %**: ninguna lectura fiable
+- **Median coverage: 72.2%**
+- **56 zones (29%) are at 0%**: not a single reliable reading
 
-Las zonas al 0 % no se pueden usar para predecir nada. En la Fase 4 hay que
-excluirlas del conjunto de entrenamiento —no como filas borradas, sino marcadas—
-y en la Fase 6 el endpoint debe responder "sin datos" en lugar de una
-probabilidad inventada sobre cero observaciones.
+Zones at 0% cannot be used to predict anything. In phase 4 they have to be
+excluded from the training set - not as deleted rows, but flagged - and in
+phase 6 the endpoint must answer "no data" rather than an invented probability
+over zero observations.
 
-## 6. Sensores intermitentes
+## 6. Flapping sensors
 
-9 plazas alternan entre fiable y no fiable en la ventana observada. Son más
-dañinas de lo que su número sugiere: un sensor que entra y sale del lote **mueve
-el denominador de su zona** sin que se haya movido ningún coche, así que la
-ocupación agregada cambia por un artefacto de medición. Candidatos a excluir de
-las features aunque individualmente parezcan sanos.
+9 bays alternate between reliable and unreliable within the observed window.
+They are more damaging than their number suggests: a sensor that drops in and
+out of the batch **moves its zone's denominator** without a single car having
+moved, so aggregate occupancy changes through a measurement artefact. They are
+candidates to exclude from the features even when they look healthy
+individually.
 
-`parking.quality.coverage.flapping_sensors` los detecta sobre la serie
-acumulada. Con más días de datos esta lista crecerá y conviene revisarla antes
-de la Fase 4.
+`parking.quality.coverage.flapping_sensors` detects them over the accumulated
+series. With more days of data this list will grow and it is worth reviewing
+before phase 4.
 
-## 7. Continuidad de la serie
+## 7. Series continuity
 
-`parking.quality.gaps` compara los sellos de lote consecutivos contra la cadencia
-del feed (120 s) con una tolerancia de 3 ciclos, para no marcar como hueco cada
-retraso normal.
+`parking.quality.gaps` compares consecutive batch stamps against the feed's
+cadence (120 s) with a tolerance of 3 cycles, so a normal delay is not flagged
+as a gap.
 
-Funcionando: en la ventana de prueba detectó correctamente los dos huecos que
-dejaron las ejecuciones manuales de `--once` antes de arrancar el poller
-continuo (18 min y 1 h 20 min). Con el poller en marcha la captura es de un lote
-cada 2 minutos sin pérdidas.
+Working as intended: during the test window it correctly detected the two gaps
+left by the manual `--once` runs before the continuous poller was started
+(18 min and 1 h 20 min). With the poller running, capture is one batch every 2
+minutes with no losses.
 
-El informe no atribuye causa al hueco, y es deliberado: "el poller no capturó" y
-"la fuente no publicó" se ven idénticos en los ficheros guardados, y
-distinguirlos requiere los logs del poller. Mezclarlos daría una falsa sensación
-de diagnóstico.
+The report does not attribute a cause to a gap, deliberately: "the poller did
+not capture" and "the source did not publish" look identical in the stored
+files, and telling them apart requires the poller's logs. Mixing them would
+give a false sense of diagnosis.
 
-## 8. Limitaciones de este informe
+## 8. Limitations of this report
 
-Hay que ser explícito en lo que **todavía no se puede afirmar**:
+It is worth being explicit about what **cannot yet be claimed**:
 
-- **La cobertura por hora no está caracterizada.** La ventana observada son
-  ~2 horas (6 snapshots), así que `coverage_by_hour` solo devuelve dos filas,
-  ambas al 56,2 %. Para saber si la cobertura se degrada de noche hace falta al
-  menos una semana de poller. La función está escrita y probada; faltan los
-  datos.
-- **Los sensores intermitentes están infra-contados** por la misma razón.
-- **El reparto entre `stuck` y `offline` es una foto.** Las cohortes de caída
-  indican que cambia por saltos cuando un relé se cae o se recupera, así que
-  conviene repetir el informe periódicamente (Fase 7).
+- **Coverage per hour is not characterised.** The observed window is ~2 hours
+  (6 snapshots), so `coverage_by_hour` only returns two rows, both at 56.2%.
+  Knowing whether coverage degrades at night needs at least a week of polling.
+  The function is written and tested; the data is what is missing.
+- **Flapping sensors are undercounted** for the same reason.
+- **The split between `stuck` and `offline` is a snapshot.** The death cohorts
+  suggest it changes in steps as a relay goes down or recovers, so the report
+  is worth repeating periodically (phase 7).
 
-## Qué se lleva la Fase 3
+## What phase 3 takes from this
 
-1. **El parque utilizable son ~3557 plazas, no 6324.** Cualquier métrica sobre
-   las 6324 está mal.
-2. **`is_reliable` es obligatorio** en features y métricas, porque el sesgo de
-   omitirlo es máximo en hora punta.
-3. **"Sin datos" tiene que ser un estado visible** en el mapa y en la API: 56
-   zonas no tienen ni una lectura fiable, y pintarlas como libres sería mentir.
+1. **The usable fleet is ~3557 bays, not 6324.** Any metric over the 6324 is
+   wrong.
+2. **`is_reliable` is mandatory** in features and metrics, because the bias of
+   omitting it peaks exactly at rush hour.
+3. **"No data" has to be a visible state** on the map and in the API: 56 zones
+   do not have a single reliable reading, and painting them as free would be a
+   lie.
 
-## Atribución
+## Attribution
 
-Datos de [City of Melbourne Open Data](https://data.melbourne.vic.gov.au/),
-licencia [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Data from [City of Melbourne Open Data](https://data.melbourne.vic.gov.au/),
+licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

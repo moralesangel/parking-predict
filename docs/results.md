@@ -1,248 +1,249 @@
-# Resultados
+# Results
 
-Informe de la Fase 5. Reproducible con:
+Phase 5 report. Reproducible with:
 
 ```bash
 uv run python scripts/train_evaluate.py
 uv run python scripts/plot_results.py
 ```
 
-## Resumen
+## Summary
 
-**El modelo bate a la persistencia en los cuatro horizontes**, y la ventaja
-crece al alejarse el horizonte: de un 12,8 % de mejora a 5 minutos hasta un
-15,0 % a 30, frente a la persistencia calibrada.
+**The model beats persistence at all four horizons**, and the advantage grows
+with the horizon: from a 12.8% improvement at 5 minutes to 15.0% at 30, against
+calibrated persistence.
 
-Pero el titular honesto es más matizado, y está en la §5: **casi toda la
-ganancia viene de suavizar el estado actual, no de aprender patrones**. Las
-features de calendario y de zonas vecinas, que eran la apuesta del plan,
-aportan menos del 2 % de la señal.
+But the honest headline is more nuanced, and it is in §5: **almost all the gain
+comes from smoothing the current state, not from learning patterns**. The
+calendar and neighbouring-zone features, which were the plan's bet, contribute
+less than 2% of the signal.
 
-## Montaje experimental
+## Experimental setup
 
 | | |
 |---|---|
-| Entrenamiento | 2019-01 … 2019-09, submuestreado 1 de cada 4 instantes → **5 399 784 filas** |
-| Validación | 2019-10 (parada temprana de LightGBM) → 627 192 filas |
-| **Test** | **2019-11 … 2019-12 completo, sin submuestrear → 5 015 232 filas** |
-| Tasa base en test | 94,49 % positivos |
+| Training | 2019-01 … 2019-09, subsampled 1 row in 4 -> **5,399,784 rows** |
+| Validation | 2019-10 (LightGBM early stopping) -> 627,192 rows |
+| **Test** | **2019-11 … 2019-12 in full, not subsampled -> 5,015,232 rows** |
+| Base rate in test | 94.49% positive |
 
-Split **temporal**, nunca aleatorio. El test son los dos últimos meses del año,
-posteriores a todo lo demás.
+**Temporal** split, never random. The test set is the last two months of the
+year, later than everything else.
 
-El entrenamiento se submuestrea en el tiempo (una fila de cada 4, es decir cada
-20 min) para que quepa en memoria. El submuestreo es **por posición dentro de
-cada tramo** y no aleatorio, para no romper la estructura temporal. El test no
-se submuestrea: las métricas se miden sobre todo lo que hay.
+Training is subsampled in time (one row in four, i.e. every 20 min) so it fits
+in memory. The subsampling is **by position within each segment** rather than
+random, so the temporal structure is not broken. The test set is not
+subsampled: the metrics are measured over everything there is.
 
-### Los cuatro modelos
+### The four models
 
-| Modelo | Qué usa |
+| Model | What it uses |
 |---|---|
-| `persistence` | El estado actual, tal cual. Responde 0 o 1. Es la referencia del plan. |
-| `calibrated_persistence` | El estado actual, pero expresado como la probabilidad empírica de que ese estado dure. **La referencia justa.** |
-| `historical_mean` | Media por tramo, día de la semana y franja horaria. Ignora el estado actual. |
-| `lightgbm` | Las 32 features. Un modelo por horizonte. |
+| `persistence` | The current state, as-is. Answers 0 or 1. The plan's reference. |
+| `calibrated_persistence` | The current state, expressed as the empirical probability that the state holds. **The fair reference.** |
+| `historical_mean` | Mean per segment, weekday and hour bucket. Ignores the current state. |
+| `lightgbm` | All 32 features. One model per horizon. |
 
-La persistencia calibrada existe porque la cruda está en desventaja artificial:
-al contestar 0 o 1, el log loss la castiga por el recorte y no por su contenido.
-La calibrada tiene **exactamente la misma información** —el estado actual, nada
-más— y no sufre ese castigo. Es la que hay que batir de verdad.
+Calibrated persistence exists because the raw version is at an artificial
+disadvantage: by answering 0 or 1, log loss punishes it for the clipping rather
+than for its content. The calibrated one has **exactly the same information** -
+the current state, nothing more - and does not suffer that penalty. It is the
+one that genuinely has to be beaten.
 
-## 1. Comparativa por horizonte
+## 1. Comparison by horizon
 
-![Brier por horizonte](img/brier_by_horizon.png)
+![Brier by horizon](img/brier_by_horizon.png)
 
-**Brier score** (menor es mejor):
+**Brier score** (lower is better):
 
-| Horizonte | LightGBM | Persistencia calibrada | Persistencia | Media histórica |
+| Horizon | LightGBM | Calibrated persistence | Persistence | Historical mean |
 |---|---|---|---|---|
-| 5 min | **0,01706** | 0,01957 | 0,02186 | 0,04743 |
-| 10 min | **0,02202** | 0,02575 | 0,03010 | 0,04742 |
-| 15 min | **0,02489** | 0,02927 | 0,03522 | 0,04741 |
-| 30 min | **0,02972** | 0,03497 | 0,04445 | 0,04741 |
+| 5 min | **0.01706** | 0.01957 | 0.02186 | 0.04743 |
+| 10 min | **0.02202** | 0.02575 | 0.03010 | 0.04742 |
+| 15 min | **0.02489** | 0.02927 | 0.03522 | 0.04741 |
+| 30 min | **0.02972** | 0.03497 | 0.04445 | 0.04741 |
 
-**Log loss** (menor es mejor):
+**Log loss** (lower is better):
 
-| Horizonte | LightGBM | Persistencia calibrada | Persistencia | Media histórica |
+| Horizon | LightGBM | Calibrated persistence | Persistence | Historical mean |
 |---|---|---|---|---|
-| 5 min | **0,0597** | 0,0871 | 0,3020 | 0,1910 |
-| 10 min | **0,0754** | 0,1096 | 0,4158 | 0,1913 |
-| 15 min | **0,0847** | 0,1221 | 0,4865 | 0,1905 |
-| 30 min | **0,1010** | 0,1425 | 0,6141 | 0,1901 |
+| 5 min | **0.0597** | 0.0871 | 0.3020 | 0.1910 |
+| 10 min | **0.0754** | 0.1096 | 0.4158 | 0.1913 |
+| 15 min | **0.0847** | 0.1221 | 0.4865 | 0.1905 |
+| 30 min | **0.1010** | 0.1425 | 0.6141 | 0.1901 |
 
-**Mejora del LightGBM** (Brier skill score):
+**LightGBM improvement** (Brier skill score):
 
-| Horizonte | vs persistencia calibrada | vs persistencia cruda |
+| Horizon | vs calibrated persistence | vs raw persistence |
 |---|---|---|
-| 5 min | 12,8 % | 22,0 % |
-| 10 min | 14,5 % | 26,8 % |
-| 15 min | 14,9 % | 29,3 % |
-| 30 min | **15,0 %** | **33,1 %** |
+| 5 min | 12.8% | 22.0% |
+| 10 min | 14.5% | 26.8% |
+| 15 min | 14.9% | 29.3% |
+| 30 min | **15.0%** | **33.1%** |
 
-Tres lecturas:
+Three readings:
 
-- **La ventaja crece con el horizonte.** Es lo esperado y lo que justifica el
-  proyecto: cuanto más lejos está el momento de llegada, menos sirve el estado
-  actual. A 5 minutos la persistencia casi basta; a 30 ya no.
-- **La media histórica es plana** (≈0,0474 en los cuatro horizontes) porque
-  ignora el estado actual, así que el horizonte le da igual. A 30 minutos sigue
-  siendo **peor que la persistencia cruda** (0,0474 vs 0,0445): la rutina por sí
-  sola no supera a mirar cómo está la calle ahora, ni siquiera a media hora
-  vista.
-- **La persistencia cruda sale muy mal en log loss** (0,30 → 0,61) frente a la
-  calibrada (0,087 → 0,14). No es que prediga peor: es que decir "0 %" cuando
-  hay un 32 % de probabilidad es un error grave para un producto que muestra
-  probabilidades.
+- **The advantage grows with the horizon.** That is expected and it is what
+  justifies the project: the further away the arrival, the less the current
+  state tells you. At 5 minutes persistence nearly suffices; at 30 it does not.
+- **The historical mean is flat** (~0.0474 at all four horizons) because it
+  ignores the current state, so the horizon is irrelevant to it. At 30 minutes
+  it is still **worse than raw persistence** (0.0474 vs 0.0445): routine alone
+  does not beat looking at how the street is right now, not even half an hour
+  out.
+- **Raw persistence does badly on log loss** (0.30 -> 0.61) compared with the
+  calibrated one (0.087 -> 0.14). It is not that it predicts worse: it is that
+  saying "0%" when there is a 32% chance is a serious error for a product that
+  shows probabilities.
 
-## 2. Calibración
+## 2. Calibration
 
-![Calibración a 15 minutos](img/calibration.png)
+![Calibration at 15 minutes](img/calibration.png)
 
-Es el entregable real: la pantalla muestra una probabilidad, así que lo que
-importa no es solo ordenar bien, sino que el número signifique lo que dice.
+This is the real deliverable: the screen shows a probability, so what matters
+is not only ranking well but that the number means what it says.
 
-Error de calibración esperado a 15 min:
+Expected calibration error at 15 min:
 
-| Modelo | ECE |
+| Model | ECE |
 |---|---|
-| LightGBM | **0,0015** |
-| Persistencia calibrada | 0,0014 |
-| Persistencia cruda | 0,0352 |
+| LightGBM | **0.0015** |
+| Calibrated persistence | 0.0014 |
+| Raw persistence | 0.0352 |
 
-LightGBM está bien calibrado en todo el rango (desviación máxima de 0,017 en los
-tramos bajos) y además **cubre todo el rango**: emite probabilidades en los diez
-deciles. Las dos persistencias solo emiten dos valores distintos; por eso en el
-gráfico aparecen como puntos sueltos y no como curva, porque unirlos sugeriría
-unos valores intermedios que nunca producen.
+LightGBM is well calibrated across the whole range (maximum deviation 0.017 in
+the low bands) and it **covers the whole range**: it emits probabilities in all
+ten deciles. The two persistence variants emit only two distinct values; that
+is why the chart shows them as loose points rather than a curve, because
+joining them would suggest intermediate values they never produce.
 
-El punto naranja en `(0,0 ; 0,32)` es el argumento entero contra la persistencia
-cruda como producto: **dice "0 % de probabilidad" en situaciones donde el 32 %
-de las veces sí hay sitio.** A un conductor le estaría diciendo que no vaya a
-una calle donde una de cada tres veces encontraría aparcamiento.
+The orange point at `(0.0, 0.32)` is the entire argument against raw
+persistence as a product: **it says "0% probability" in situations where 32% of
+the time there is space.** It would be telling a driver not to go to a street
+where one time in three they would find a spot.
 
-## 3. Desglose por nivel de ocupación
+## 3. Breakdown by occupancy level
 
-![Brier por nivel de ocupación](img/by_occupancy.png)
+![Brier by occupancy level](img/by_occupancy.png)
 
-Es el desglose que pide el plan, y el que de verdad importa: la media global
-está dominada por los tramos vacíos, donde todo el mundo acierta.
+This is the breakdown the plan asks for, and the one that matters: the global
+mean is dominated by empty segments, where everybody gets it right.
 
-A 15 minutos:
+At 15 minutes:
 
-| Plazas libres ahora | n | Tasa base | Persistencia | Calibrada | LightGBM | Mejora |
+| Free bays now | n | Base rate | Persistence | Calibrated | LightGBM | Improvement |
 |---|---|---|---|---|---|---|
-| **0 (lleno)** | 276 608 | **31,9 %** | 0,3193 | 0,2174 | **0,1910** | 12,1 % |
-| 1 | 446 600 | 86,0 % | 0,1404 | 0,1358 | **0,1077** | 20,7 % |
-| 2 | 520 227 | 96,5 % | 0,0352 | 0,0343 | **0,0323** | 5,9 % |
-| 3-5 | 1 278 852 | 99,5 % | 0,0055 | 0,0056 | **0,0053** | 4,5 % |
-| 6+ | 2 492 945 | 100,0 % | 0,0001 | 0,0004 | 0,0001 | — |
+| **0 (full)** | 276,608 | **31.9%** | 0.3193 | 0.2174 | **0.1910** | 12.1% |
+| 1 | 446,600 | 86.0% | 0.1404 | 0.1358 | **0.1077** | 20.7% |
+| 2 | 520,227 | 96.5% | 0.0352 | 0.0343 | **0.0323** | 5.9% |
+| 3-5 | 1,278,852 | 99.5% | 0.0055 | 0.0056 | **0.0053** | 4.5% |
+| 6+ | 2,492,945 | 100.0% | 0.0001 | 0.0004 | 0.0001 | — |
 
-Lo importante:
+What matters:
 
-- **Cuando el tramo está lleno, solo el 31,9 % de las veces habrá sitio 15
-  minutos después.** Ahí vive el problema difícil, y ahí LightGBM mejora un
-  12,1 % sobre la mejor persistencia. Es un caso real y frecuente: 276 608
-  observaciones, el 5,5 % del test.
-- **El mejor caso es "1 plaza libre"**, con un 20,7 % de mejora. Tiene sentido:
-  es la situación más inestable: basta que llegue un coche para que la respuesta
-  cambie, y ahí la tendencia reciente y el ritmo de rotación sí informan.
-- **En "6+ libres" la mejora no significa nada.** La tasa base es del 99,99 % y
-  el Brier absoluto es 0,0001; cualquier diferencia relativa ahí es ruido sobre
-  un problema que no existe. Lo menciono porque un skill score del 69 % en esa
-  fila quedaría muy bien en una tabla y no querría decir nada.
-- **La media histórica se hunde en el caso lleno** (Brier 0,507, peor que no
-  predecir nada). Saber que "los martes a las 11 esta calle suele tener sitio"
-  es inútil cuando la calle está llena ahora mismo.
+- **When the segment is full, only 31.9% of the time will there be space 15
+  minutes later.** That is where the hard problem lives, and that is where
+  LightGBM improves by 12.1% over the best persistence. It is a real and
+  frequent case: 276,608 observations, 5.5% of the test set.
+- **The best case is "1 free bay"**, at 20.7%. That makes sense: it is the most
+  unstable situation - one arriving car flips the answer - and that is where the
+  recent trend and turnover rate genuinely inform.
+- **In "6+ free" the improvement means nothing.** The base rate is 99.99% and
+  the absolute Brier is 0.0001; any relative difference there is noise over a
+  problem that does not exist. It is mentioned because a 69% skill score on that
+  row would look excellent in a table and would mean nothing.
+- **The historical mean collapses in the full case** (Brier 0.507, worse than
+  predicting nothing). Knowing that "this street usually has space on Tuesdays
+  at 11" is useless when the street is full right now.
 
-## 4. Desglose por hora
+## 4. Breakdown by hour
 
-![Brier por hora](img/by_hour.png)
+![Brier by hour](img/by_hour.png)
 
-El error sigue el ciclo de ocupación: mínimo de madrugada (todo vacío, todo
-fácil) y máximo en los dos picos, mediodía y tarde-noche. La mejora del modelo
-es **positiva en las 24 horas**, entre el 11,6 % y el 26,1 %.
+The error follows the occupancy cycle: lowest overnight (everything empty,
+everything easy) and highest at the two peaks, midday and evening. The model's
+improvement is **positive across all 24 hours**, between 11.6% and 26.1%.
 
-En términos absolutos la ganancia es mayor en las horas punta, que es donde hay
-algo que ganar: a las 12 UTC el Brier pasa de 0,0523 a 0,0440.
+In absolute terms the gain is larger at peak hours, which is where there is
+something to gain: at 12 UTC the Brier drops from 0.0523 to 0.0440.
 
-## 5. Qué aprendió el modelo (y qué no)
+## 5. What the model learned (and what it did not)
 
-Importancia por ganancia a 15 minutos:
+Gain-based importance at 15 minutes:
 
-| Feature | Ganancia |
+| Feature | Gain |
 |---|---|
-| `free_bays_mean15` | **46,1 %** |
-| `free_bays` | **44,2 %** |
-| `free_bays_mean30` | 3,2 % |
-| `free_bays_mean60` | 1,5 % |
-| `hour` | 1,2 % |
-| `occupancy_rate` | 0,7 % |
-| `neighbour_occupancy_rate` | 0,3 % |
-| `neighbour_free_bays` | 0,3 % |
-| resto (24 features) | < 2,5 % |
+| `free_bays_mean15` | **46.1%** |
+| `free_bays` | **44.2%** |
+| `free_bays_mean30` | 3.2% |
+| `free_bays_mean60` | 1.5% |
+| `hour` | 1.2% |
+| `occupancy_rate` | 0.7% |
+| `neighbour_occupancy_rate` | 0.3% |
+| `neighbour_free_bays` | 0.3% |
+| rest (24 features) | < 2.5% |
 
-**El 90 % de la señal son dos features: el estado actual y su media de los
-últimos 15 minutos.** Esto hay que decirlo tal cual porque contradice en parte
-la hipótesis del plan:
+**90% of the signal is two features: the current state and its mean over the
+last 15 minutes.** This has to be said plainly because it partly contradicts
+the plan's hypothesis:
 
-- **Las zonas vecinas aportan un 0,6 %.** El plan las proponía como feature
-  relevante y los datos dicen que apenas lo son. Posible explicación: la
-  adyacencia derivada de nombres de calle es tosca, y la ocupación de un tramo
-  ya resume bastante bien la presión de su entorno.
-- **El calendario aporta ~1,6 %** (`hour` + `day_of_week` + festivos). El ciclo
-  diario es fortísimo —se ve en el §4— pero el modelo no lo necesita: ya está
-  implícito en el estado actual, que *es* el resultado del ciclo.
-- **Lo que de verdad añade valor sobre la persistencia es la media móvil de 15
-  minutos**, es decir, suavizar el ruido de la medición instantánea y captar la
-  tendencia. Una interpretación justa del resultado es que el modelo es, en
-  esencia, "una persistencia mejor medida".
+- **Neighbouring zones contribute 0.6%.** The plan proposed them as a relevant
+  feature and the data says they barely are. Possible explanation: adjacency
+  derived from street names is crude, and a segment's own occupancy already
+  summarises the pressure around it fairly well.
+- **The calendar contributes ~1.6%** (`hour` + `day_of_week` + holidays). The
+  daily cycle is very strong - §4 shows it - but the model does not need it: it
+  is already implicit in the current state, which *is* the result of the cycle.
+- **What genuinely adds value over persistence is the 15-minute rolling mean**,
+  that is, smoothing the noise of the instantaneous measurement and capturing
+  the trend. A fair reading of the result is that the model is, in essence, "a
+  better-measured persistence".
 
-Es un resultado menos lucido que "el ML descubre patrones ocultos", pero es el
-que hay.
+That is a less impressive result than "ML discovers hidden patterns", but it is
+the one the data gives.
 
-## 6. Limitaciones
+## 6. Limitations
 
-Lo que estos números **no** demuestran:
+What these numbers do **not** demonstrate:
 
-1. **Son resultados sobre 2019.** El dataset es histórico y no sirve para
-   producción (razones en [`id_crosswalk.md`](id_crosswalk.md) §5: deriva
-   temporal y renovación del parque de sensores). Que LightGBM mejore un 15 %
-   en 2019 no garantiza que lo haga hoy. Habrá que repetir esta evaluación con
-   los datos que acumule el poller.
-2. **No hay búsqueda de hiperparámetros.** Los parámetros son conservadores y
-   fijos. Con un baseline tan fuerte, lo que decide el resultado es si las
-   features aportan algo, y ajustar el tercer decimal del `learning_rate` antes
-   de saberlo sería optimizar ruido. La mejora del 15 % es por tanto un **suelo**
-   razonable, no un techo.
-3. **El entrenamiento está submuestreado 1 de cada 4.** Con los datos completos
-   el modelo podría mejorar algo; no se ha medido.
-4. **`total_bays` es el inventario observado, no el real.** Si un sensor estuvo
-   muerto todo un mes, su plaza no existe para el modelo, y el objetivo "hay al
-   menos una libre" se evalúa sobre un denominador incompleto.
-5. **Las fechas van sin zona horaria**, así que los dos días de cambio horario
-   de 2019 están corruptos. A escala de dos meses de test es ruido.
-6. **No se ha evaluado la alternativa de predecir el recuento** y derivar la
-   probabilidad, aunque el dataset la soporta (`free_bays_h*`). El plan la pedía
-   como alternativa a evaluar y queda pendiente.
+1. **These are 2019 results.** The dataset is historical and not suitable for
+   production (reasons in [`id_crosswalk.md`](id_crosswalk.md) §5: temporal
+   drift and sensor fleet renewal). LightGBM improving by 15% in 2019 does not
+   guarantee it does so today. This evaluation will have to be repeated with the
+   data the poller accumulates.
+2. **No hyperparameter search.** The parameters are conservative and fixed. With
+   such a strong baseline, what decides the outcome is whether the features add
+   anything, and tuning the third decimal of `learning_rate` before knowing that
+   would be optimising noise. The 15% improvement is therefore a reasonable
+   **floor**, not a ceiling.
+3. **Training is subsampled 1 row in 4.** With the complete data the model might
+   improve somewhat; that has not been measured.
+4. **`total_bays` is the observed inventory, not the real one.** If a sensor was
+   dead for a whole month, its bay does not exist for the model, and the target
+   "at least one is free" is evaluated over an incomplete denominator.
+5. **The dates carry no timezone**, so the two 2019 clock-change days are
+   corrupted. Over two months of test data that is noise.
+6. **The alternative of predicting the count** and deriving the probability has
+   not been evaluated, although the dataset supports it (`free_bays_h*`). The
+   plan asked for it as an alternative to evaluate and it remains pending.
 
-## 7. Conclusión para el producto
+## 7. Conclusion for the product
 
-**Sí vale la pena predecir**, pero con dos matices que conviene no esconder:
+**Yes, predicting is worth it**, with two caveats that should not be hidden:
 
-- A **5 minutos**, la persistencia calibrada ya hace el 87 % del trabajo. Si el
-  producto solo mostrara el estado actual bien expresado como probabilidad, sería
-  casi tan bueno.
-- A **30 minutos** —que es el caso de uso real, el conductor que va de camino—
-  la mejora es del 15 % sobre la mejor persistencia y del 33 % sobre la cruda,
-  y en las zonas llenas llega al 12 %. Ahí la predicción sí cambia la respuesta.
+- At **5 minutes**, calibrated persistence already does 87% of the work. A
+  product that only showed the current state properly expressed as a probability
+  would be nearly as good.
+- At **30 minutes** - the real use case, the driver already on the way - the
+  improvement is 15% over the best persistence and 33% over the raw one, and in
+  full zones it reaches 12%. There the prediction does change the answer.
 
-Y el argumento más fuerte no es el Brier sino la **calibración**: la persistencia
-cruda afirma "0 %" en situaciones con un 32 % de probabilidad real. Un producto
-construido sobre ella mandaría a la gente a buscar más lejos de lo necesario una
-de cada tres veces.
+And the strongest argument is not the Brier score but the **calibration**: raw
+persistence claims "0%" in situations with a real 32% probability. A product
+built on it would send people searching further than necessary one time in
+three.
 
-## Atribución
+## Attribution
 
-Datos de [City of Melbourne Open Data](https://data.melbourne.vic.gov.au/),
-licencia [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Data from [City of Melbourne Open Data](https://data.melbourne.vic.gov.au/),
+licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
