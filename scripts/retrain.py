@@ -1,22 +1,22 @@
-"""Job de reentrenamiento con los datos acumulados por el poller.
+"""Retraining job over the data the poller has accumulated.
 
     uv run python scripts/retrain.py --horizon 15
 
-Pensado para correr programado (cron, Task Scheduler o el servicio del
-compose). Hace cuatro cosas, en este orden:
+Meant to run on a schedule (cron, Task Scheduler or the compose service). It
+does four things, in this order:
 
-1. Construye el dataset desde los snapshots acumulados.
-2. **Comprueba que hay datos suficientes y se niega a entrenar si no.**
-3. Entrena sobre la parte antigua y evalúa sobre la reciente (split temporal).
-4. Promociona el modelo **solo si bate a la persistencia** y no empeora al que
-   ya está en producción.
+1. Build the dataset from the accumulated snapshots.
+2. **Check there is enough data and refuse to train if there is not.**
+3. Train on the older part and evaluate on the recent part (temporal split).
+4. Promote the model **only if it beats persistence** and does not regress
+   against what is already in production.
 
-El punto 2 importa tanto como el resto. Un job que entrena con lo que haya
-produce, antes o después, un modelo basado en seis horas de un martes; que se
-niegue y lo diga es el comportamiento correcto, no un fallo.
+Step 2 matters as much as the rest. A job that trains on whatever is there
+will, sooner or later, produce a model based on six hours of a Tuesday; one
+that refuses and says so is the correct behaviour, not a failure.
 
-Salida distinta de cero solo si el job **falla**. Que no promocione no es un
-fallo: es una decisión, y se registra en el histórico del registro.
+A non-zero exit code only means the job **failed**. Not promoting is not a
+failure: it is a decision, and it is recorded in the registry's history.
 """
 
 from __future__ import annotations
@@ -47,27 +47,27 @@ from parking.quality.gaps import load_series
 
 logger = logging.getLogger("retrain")
 
-#: Mínimos para que reentrenar signifique algo. Son juicios, no umbrales
-#: derivados de los datos, y por eso van como parámetros:
-#: - 14 días cubren dos ciclos semanales completos. Con menos, el modelo no ha
-#:   visto un fin de semana suficientes veces para distinguirlo del ruido.
-#: - 50 000 filas con objetivo observado evitan entrenar sobre un puñado de
-#:   tramos durante una caída del feed.
+#: Minimums for retraining to mean anything. These are judgement calls, not
+#: thresholds derived from the data, which is why they are parameters:
+#: - 14 days covers two full weekly cycles. With less, the model has not seen
+#:   a weekend often enough to tell it apart from noise.
+#: - 50,000 labelled rows avoids training on a handful of segments during a
+#:   feed outage.
 MIN_DAYS = 14
 MIN_LABELLED_ROWS = 50_000
 
 
 def build_training_frame(settings) -> tuple[pl.DataFrame, dict]:
-    """Dataset con objetivos a partir de los snapshots acumulados."""
+    """Dataset with targets, built from the accumulated snapshots."""
     raw = load_series(settings.realtime_raw_dir)
     if raw.is_empty():
-        raise SystemExit("no hay snapshots; arranca el poller")
+        raise SystemExit("no snapshots; start the poller")
 
     series = annotate_quality(raw, stuck_after_hours=settings.stuck_after_hours)
     mapping = load_bay_segments(settings.data_dir / "reference" / "parking_bays.json")
     occupancy = segment_occupancy(series, mapping)
     if occupancy.is_empty():
-        raise SystemExit("ninguna plaza fiable se pudo asignar a un tramo")
+        raise SystemExit("no reliable bay could be assigned to a segment")
 
     dense = densify(occupancy)
     features = build_live_features(dense)
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         "--holdout-fraction",
         type=float,
         default=0.25,
-        help="fraccion FINAL de la ventana que se reserva para evaluar",
+        help="FINAL fraction of the window held out for evaluation",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", stream=sys.stdout)
@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     features, span = build_training_frame(settings)
     logger.info(
-        "datos acumulados: %.2f dias | %d tramos | %d filas (%s -> %s)",
+        "accumulated data: %.2f days | %d segments | %d rows (%s -> %s)",
         span["days"],
         span["segments"],
         span["rows"],
@@ -114,18 +114,18 @@ def main(argv: list[str] | None = None) -> int:
         features, horizons=(args.horizon,), grid_minutes=LIVE_GRID_MINUTES
     ).filter(pl.col(target).is_not_null())
 
-    # --- la puerta de "hay datos suficientes" ---
+    # --- the "is there enough data" gate ---
     reasons = []
     if span["days"] < args.min_days:
-        reasons.append(f"solo {span['days']:.2f} dias de datos (minimo {args.min_days})")
+        reasons.append(f"only {span['days']:.2f} days of data (minimum {args.min_days})")
     if labelled.height < args.min_rows:
-        reasons.append(f"solo {labelled.height} filas etiquetadas (minimo {args.min_rows})")
+        reasons.append(f"only {labelled.height} labelled rows (minimum {args.min_rows})")
     if reasons:
-        reason = "datos insuficientes: " + "; ".join(reasons)
-        logger.warning("NO se reentrena. %s", reason)
+        reason = "insufficient data: " + "; ".join(reasons)
+        logger.warning("NOT retraining. %s", reason)
         logger.warning(
-            "Es el comportamiento correcto: un modelo entrenado con esta ventana "
-            "no habria visto suficientes ciclos semanales."
+            "This is the correct behaviour: a model trained on this window "
+            "would not have seen enough weekly cycles."
         )
         registry.record(
             decide(float("inf"), 0.0, None),
@@ -140,13 +140,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    # --- split temporal ---
+    # --- temporal split ---
     cutoff = labelled["timestamp"].quantile(1 - args.holdout_fraction)
     train = labelled.filter(pl.col("timestamp") < cutoff)
     holdout = labelled.filter(pl.col("timestamp") >= cutoff)
-    logger.info(
-        "train %d filas | holdout %d filas (corte %s)", train.height, holdout.height, cutoff
-    )
+    logger.info("train %d rows | holdout %d rows (cutoff %s)", train.height, holdout.height, cutoff)
 
     y_true = holdout[target].to_numpy().astype(np.float64)
     features_list = [c for c in feature_columns(train) if c != "is_interpolated"]
@@ -162,12 +160,12 @@ def main(argv: list[str] | None = None) -> int:
 
     decision = decide(candidate_brier, persistence_brier, production_brier)
     logger.info(
-        "candidato %.5f | persistencia %.5f | produccion %s",
+        "candidate %.5f | persistence %.5f | production %s",
         candidate_brier,
         persistence_brier,
-        f"{production_brier:.5f}" if production_brier is not None else "ninguno",
+        f"{production_brier:.5f}" if production_brier is not None else "none",
     )
-    logger.info("%s: %s", "PROMOCIONA" if decision.promoted else "NO promociona", decision.reason)
+    logger.info("%s: %s", "PROMOTING" if decision.promoted else "NOT promoting", decision.reason)
 
     staging = settings.processed_dir / "candidates" / version
     candidate.save(staging, f"lightgbm_h{args.horizon}")

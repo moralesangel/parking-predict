@@ -1,13 +1,13 @@
-"""Recalcula el informe de cruce de identificadores de `docs/id_crosswalk.md`.
+"""Recompute the identifier crosswalk report in `docs/id_crosswalk.md`.
 
-Reimprime las tablas de solape descargando las entradas de la API. Las cifras
-del documento salen de aquí, así que cualquiera puede comprobarlas.
+Reprints the overlap tables by downloading the inputs from the API. The
+document's figures come from here, so anyone can check them.
 
     uv run python scripts/crosswalk_report.py --help
 
-Por defecto usa una muestra de 150 MB del ZIP histórico (lo descarga por rango
-si no está en disco). Con `--full` recorre el fichero completo, que ya debería
-estar descargado por `parking.ingest.historical`.
+By default it uses a 150 MB sample of the historical ZIP (range-downloading it
+if it is not on disk). With `--full` it walks the complete file, which should
+already have been downloaded by `parking.ingest.historical`.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ SAMPLE_BYTES = 150 << 20
 
 
 def fetch_export(dataset: str, select: str, client: httpx.Client) -> list[dict]:
-    """Descarga un dataset completo por el endpoint de export JSON."""
-    logger.info("descargando %s", dataset)
+    """Download a full dataset through the JSON export endpoint."""
+    logger.info("downloading %s", dataset)
     response = client.get(
         f"{API}/{dataset}/exports/json", params={"limit": -1, "select": select}, timeout=180
     )
@@ -46,15 +46,15 @@ def fetch_export(dataset: str, select: str, client: httpx.Client) -> list[dict]:
 
 
 def iter_sample_rows(archive_prefix: Path) -> Iterator[dict[str, str]]:
-    """Itera las filas del CSV inflando el prefijo de un ZIP parcial.
+    """Iterate the CSV rows by inflating the prefix of a partial ZIP.
 
-    Un ZIP truncado no tiene directorio central, así que `zipfile` no lo abre:
-    se lee la cabecera local y se infla el stream deflate a mano. Es lo que
-    permite inspeccionar 42,7 M de filas sin bajar los 717 MB.
+    A truncated ZIP has no central directory, so `zipfile` cannot open it: the
+    local header is read and the deflate stream inflated by hand. That is what
+    allows inspecting 42.7M rows without downloading all 717 MB.
     """
     raw = archive_prefix.read_bytes()
     if raw[:4] != b"PK\x03\x04":
-        raise ValueError(f"{archive_prefix} no empieza por una cabecera local de ZIP")
+        raise ValueError(f"{archive_prefix} does not start with a ZIP local header")
     name_len, extra_len = struct.unpack("<HH", raw[26:30])
     body = raw[30 + name_len + extra_len :]
 
@@ -65,19 +65,19 @@ def iter_sample_rows(archive_prefix: Path) -> Iterator[dict[str, str]]:
         try:
             chunks.append(decompressor.decompress(body[offset : offset + step]))
         except zlib.error:
-            break  # fin del prefijo disponible
+            break  # end of the available prefix
     text = b"".join(chunks).decode("utf-8-sig", "replace")
-    # La última línea del prefijo casi seguro está cortada a medias.
+    # The prefix's last line is almost certainly cut in half.
     yield from csv.DictReader(io.StringIO(text[: text.rfind("\n")]))
 
 
 def download_sample(destination: Path, client: httpx.Client) -> Path:
-    """Baja los primeros `SAMPLE_BYTES` del ZIP de 2019 por petición `Range`."""
+    """Fetch the first `SAMPLE_BYTES` of the 2019 ZIP with a `Range` request."""
     if destination.exists() and destination.stat().st_size >= SAMPLE_BYTES:
-        logger.info("muestra ya en disco: %s", destination)
+        logger.info("sample already on disk: %s", destination)
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("descargando muestra de %d MB por Range", SAMPLE_BYTES >> 20)
+    logger.info("range-downloading a %d MB sample", SAMPLE_BYTES >> 20)
     with client.stream(
         "GET",
         HISTORICAL_ARCHIVES["2019"],
@@ -100,7 +100,7 @@ def overlap(a: set, b: set) -> tuple[int, float]:
 def report_line(left_name: str, left: set, right_name: str, right: set) -> None:
     count, pct = overlap(left, right)
     verdict = "OK " if pct > 50 else ("~  " if pct > 5 else "NO ")
-    print(f"  {verdict} {left_name:<22} n {right_name:<22} {count:>5} comunes = {pct:5.1f} %")
+    print(f"  {verdict} {left_name:<22} n {right_name:<22} {count:>5} common = {pct:5.1f} %")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--full",
         action="store_true",
-        help="recorre el ZIP completo en vez de la muestra de 150 MB",
+        help="walk the complete ZIP instead of the 150 MB sample",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.full:
             archive = settings.historical_raw_dir / "sensor-data-2019.zip"
             if not archive.exists():
-                parser.error(f"falta {archive}; ejecuta antes la descarga del histórico")
+                parser.error(f"missing {archive}; download the historical archive first")
             lines = iter_csv_lines(archive)
             header = next(iter(lines)).split(",")
             rows: Iterator[dict[str, str]] = (
@@ -169,43 +169,43 @@ def main(argv: list[str] | None = None) -> int:
         geo_segments[key].add(row["roadsegmentid"])
 
     print(
-        f"\nmuestra histórico: {events:,} eventos, {len(hist_devices)} DeviceId, "
-        f"{len(hist_bays)} BayId, {len(hist_segments)} tramos"
+        f"\nhistorical sample: {events:,} events, {len(hist_devices)} DeviceId, "
+        f"{len(hist_bays)} BayId, {len(hist_segments)} segments"
     )
-    print(f"geometría: {len(geometry):,} filas, {unparsed} descripciones no parseables\n")
+    print(f"geometry: {len(geometry):,} rows, {unparsed} unparseable descriptions\n")
 
-    print("=== A) histórico -> tiempo real, directo ===")
+    print("=== A) historical -> real time, direct ===")
     report_line("hist.DeviceId", hist_devices, "realtime.kerbsideid", rt_kerb)
     report_line("hist.BayId", hist_bays, "realtime.kerbsideid", rt_kerb)
     report_line("hist.DeviceId", hist_devices, "bays.kerbsideid", geo_kerb)
     report_line("hist.BayId", hist_bays, "bays.kerbsideid", geo_kerb)
 
-    print("\n=== B) histórico -> restricciones (puente candidato) ===")
+    print("\n=== B) historical -> restrictions (candidate bridge) ===")
     report_line("hist.DeviceId", hist_devices, "restr.deviceid", restr_dev)
     report_line("hist.BayId", hist_bays, "restr.bayid", restr_bay)
 
-    print("\n=== C) restricciones -> tiempo real (cerraría el puente) ===")
+    print("\n=== C) restrictions -> real time (would close the bridge) ===")
     report_line("restr.deviceid", restr_dev, "realtime.kerbsideid", rt_kerb)
     report_line("restr.bayid", restr_bay, "realtime.kerbsideid", rt_kerb)
 
-    print("\n=== D) control: geometría -> tiempo real (debe cruzar) ===")
+    print("\n=== D) control: geometry -> real time (must join) ===")
     report_line("realtime.kerbsideid", rt_kerb, "bays.kerbsideid", geo_kerb)
 
     crossed = set(hist_segments) & set(geo_segments)
     covered = sum(n for key, n in hist_segments.items() if key in crossed)
     markers = sum(1 for key in hist_marker_segment.values() if key in crossed)
     ambiguous = sum(1 for key in crossed if len(geo_segments[key]) > 1)
-    print("\n=== CRUCE POR TRAMO DE CALLE ===")
+    print("\n=== STREET SEGMENT CROSSWALK ===")
     print(
-        f"  tramos que cruzan : {len(crossed)}/{len(hist_segments)} = "
+        f"  segments that join : {len(crossed)}/{len(hist_segments)} = "
         f"{len(crossed) / max(len(hist_segments), 1) * 100:.1f} %"
     )
-    print(f"  eventos cubiertos : {covered:,}/{events:,} = {covered / max(events, 1) * 100:.1f} %")
+    print(f"  events covered     : {covered:,}/{events:,} = {covered / max(events, 1) * 100:.1f} %")
     print(
-        f"  plazas cubiertas  : {markers}/{len(hist_marker_segment)} = "
+        f"  bays covered       : {markers}/{len(hist_marker_segment)} = "
         f"{markers / max(len(hist_marker_segment), 1) * 100:.1f} %"
     )
-    print(f"  tramos ambiguos (>1 roadsegmentid): {ambiguous}")
+    print(f"  ambiguous segments (>1 roadsegmentid): {ambiguous}")
     return 0
 
 

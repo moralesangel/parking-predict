@@ -1,16 +1,15 @@
-"""Informe de monitorización sobre los datos acumulados.
+"""Monitoring report over the accumulated data.
 
     uv run python scripts/monitor.py
 
-Las tres señales que pide la Fase 7, cada una respondiendo a una pregunta
-distinta:
+The three signals phase 7 asks for, each answering a different question:
 
-1. **Degradación** — ¿el modelo sigue batiendo a la persistencia *hoy*?
-2. **Drift** — ¿la ocupación de hoy se parece a la de entrenamiento?
-3. **Cobertura** — ¿sobre cuánta ciudad seguimos teniendo datos?
+1. **Degradation** - is the model still beating persistence *today*?
+2. **Drift** - does today's occupancy look like the training distribution?
+3. **Coverage** - how much of the city do we still have data for?
 
-Escribe `data/processed/monitoring/report.json`, que es lo que sirve el
-endpoint `/monitoring`.
+Writes `data/processed/monitoring/report.json`, which is what the `/monitoring`
+endpoint serves.
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ logger = logging.getLogger("monitor")
 
 
 def jsonable(value):
-    """Fechas a ISO, para que el informe sea JSON válido."""
+    """Convert dates to ISO strings so the report is valid JSON."""
     if hasattr(value, "isoformat"):
         return value.isoformat()
     if isinstance(value, dict):
@@ -54,7 +53,7 @@ def jsonable(value):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--reference-month", default="2019-06", help="mes de referencia para el drift"
+        "--reference-month", default="2019-06", help="reference month for the drift comparison"
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", stream=sys.stdout)
@@ -62,10 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     report: dict = {}
 
-    # --- datos en vivo ---
+    # --- live data ---
     raw = load_series(settings.realtime_raw_dir)
     if raw.is_empty():
-        print("no hay snapshots; arranca el poller", file=sys.stderr)
+        print("no snapshots; start the poller", file=sys.stderr)
         return 1
     series = annotate_quality(raw, stuck_after_hours=settings.stuck_after_hours)
 
@@ -80,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         | {"gap_count": len(continuity["gaps"])}
     )
 
-    # --- 3. cobertura ---
+    # --- 3. coverage ---
     latest = series.filter(pl.col("feed_lastupdated") == series["feed_lastupdated"].max())
     zones = coverage_by_zone(latest, min_bays=10)
     report["coverage"] = jsonable(
@@ -95,13 +94,13 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
     logger.info(
-        "cobertura: %s%% (%s de %s plazas)",
+        "coverage: %s%% (%s of %s bays)",
         report["coverage"]["coverage_pct"],
         report["coverage"]["bays_reliable"],
         report["coverage"]["bays_total"],
     )
 
-    # --- features en vivo, base de las otras dos señales ---
+    # --- live features, the basis for the other two signals ---
     mapping = load_bay_segments(settings.data_dir / "reference" / "parking_bays.json")
     occupancy = segment_occupancy(series, mapping)
     live = build_live_features(densify(occupancy))
@@ -124,11 +123,11 @@ def main(argv: list[str] | None = None) -> int:
                 "bins": drift.bins.to_dicts(),
             }
         )
-        logger.info("drift de ocupacion: PSI %.4f (%s)", drift.psi, drift.level)
+        logger.info("occupancy drift: PSI %.4f (%s)", drift.psi, drift.level)
     else:
-        report["drift"] = {"error": f"falta {reference_path}"}
+        report["drift"] = {"error": f"missing {reference_path}"}
 
-    # --- 1. degradacion ---
+    # --- 1. degradation ---
     registry = ModelRegistry(settings.processed_dir / "registry")
     model_dir = (
         registry.production_dir
@@ -148,12 +147,12 @@ def main(argv: list[str] | None = None) -> int:
             continue
         degradation.append(result.as_dict())
         logger.info(
-            "h=%2d  modelo %.5f  persistencia %.5f  skill %+.1f%%%s",
+            "h=%2d  model %.5f  persistence %.5f  skill %+.1f%%%s",
             horizon,
             result.model_brier,
             result.persistence_brier,
             result.skill_vs_persistence * 100,
-            "  <-- DEGRADADO" if result.is_degraded else "",
+            "  <-- DEGRADED" if result.is_degraded else "",
         )
     report["degradation"] = degradation
     report["registry_history"] = registry.history()[-10:]
@@ -163,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     (destination / "report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    logger.info("informe en %s", destination / "report.json")
+    logger.info("report written to %s", destination / "report.json")
     return 0
 
 

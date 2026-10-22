@@ -1,15 +1,15 @@
-"""Entrena los baselines y el modelo, y evalúa los cuatro horizontes.
+"""Train the baselines and the model, and evaluate all four horizons.
 
     uv run python scripts/train_evaluate.py
 
-Escribe las tablas en `data/processed/results/` y los gráficos en
-`docs/img/`. Las cifras de `docs/results.md` salen de aquí.
+Writes the tables into `data/processed/results/` and saves the models into
+`data/processed/models/`. The figures in `docs/results.md` come from here.
 
-Split temporal fijo, nunca aleatorio:
+Fixed temporal split, never random:
 
-- entrenamiento: 2019-01 .. 2019-09
-- validación:    2019-10          (parada temprana de LightGBM)
-- test:          2019-11 .. 2019-12
+- training:   2019-01 .. 2019-09
+- validation: 2019-10          (LightGBM early stopping)
+- test:       2019-11 .. 2019-12
 """
 
 from __future__ import annotations
@@ -46,16 +46,16 @@ TEST_MONTHS = ["2019-11", "2019-12"]
 
 
 def load_months(root, months: list[str], *, every_nth: int = 1) -> pl.DataFrame:
-    """Carga las particiones mensuales indicadas.
+    """Load the given monthly partitions.
 
-    `every_nth` submuestrea en el tiempo quedándose con una fila de cada N por
-    tramo. Se hace **por posición dentro de cada tramo** y no al azar para que
-    el submuestreo no rompa la estructura temporal ni mezcle tramos.
+    `every_nth` subsamples in time, keeping one row out of every N per segment.
+    It is done **by position within each segment** rather than at random, so
+    the subsampling neither breaks the temporal structure nor mixes segments.
     """
     paths = [root / f"month={month}" / "part.parquet" for month in months]
     missing = [p for p in paths if not p.exists()]
     if missing:
-        raise FileNotFoundError(f"faltan particiones: {[str(p) for p in missing]}")
+        raise FileNotFoundError(f"missing partitions: {[str(p) for p in missing]}")
 
     frame = pl.read_parquet(paths)
     if every_nth > 1:
@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         "--train-every-nth",
         type=int,
         default=4,
-        help="submuestreo temporal del entrenamiento (4 = una fila de cada 4, 20 min)",
+        help="temporal subsampling of the training set (4 = one row in four, 20 min)",
     )
     parser.add_argument("--horizons", type=int, nargs="+", default=list(DEFAULT_HORIZONS))
     args = parser.parse_args(argv)
@@ -85,12 +85,12 @@ def main(argv: list[str] | None = None) -> int:
     out = settings.processed_dir / "results"
     out.mkdir(parents=True, exist_ok=True)
 
-    logger.info("cargando datos")
+    logger.info("loading data")
     train = load_months(root, TRAIN_MONTHS, every_nth=args.train_every_nth)
     validation = load_months(root, VALIDATION_MONTHS, every_nth=args.train_every_nth)
     test = load_months(root, TEST_MONTHS)
     logger.info(
-        "train %d | validation %d | test %d filas", train.height, validation.height, test.height
+        "train %d | validation %d | test %d rows", train.height, validation.height, test.height
     )
 
     features = feature_columns(train)
@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for horizon in args.horizons:
         target = f"target_h{horizon}"
-        logger.info("--- horizonte %d min ---", horizon)
+        logger.info("--- horizon %d min ---", horizon)
 
         evaluable = test.filter(pl.col(target).is_not_null())
         y_true = evaluable[target].to_numpy().astype(np.float64)
@@ -168,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         encoding="utf-8",
     )
-    logger.info("resultados en %s", out)
+    logger.info("results in %s", out)
     return 0
 
 

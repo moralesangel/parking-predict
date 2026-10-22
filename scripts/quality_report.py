@@ -1,9 +1,9 @@
-"""Genera las cifras del informe de calidad de `docs/data_quality.md`.
+"""Produce the figures behind the quality report in `docs/data_quality.md`.
 
     uv run python scripts/quality_report.py
 
-Todo sale de los snapshots en disco, así que las cifras del documento son
-comprobables y se pueden recalcular cuando el poller lleve más tiempo.
+Everything comes from the snapshots on disk, so the document's numbers are
+checkable and can be recomputed once the poller has been running longer.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         "--stuck-after-hours",
         type=float,
         default=None,
-        help="umbral de sensor atascado (por defecto, el de la configuración)",
+        help="stuck-sensor threshold (defaults to the configured value)",
     )
     args = parser.parse_args(argv)
 
@@ -46,42 +46,42 @@ def main(argv: list[str] | None = None) -> int:
 
     stamps = snapshot_timestamps(settings.realtime_raw_dir)
     if not stamps:
-        print("no hay snapshots en disco; arranca el poller primero", file=sys.stderr)
+        print("no snapshots on disk; start the poller first", file=sys.stderr)
         return 1
 
     series = annotate_quality(load_series(settings.realtime_raw_dir), stuck_after_hours=threshold)
     latest_batch = series["feed_lastupdated"].max()
     latest = series.filter(pl.col("feed_lastupdated") == latest_batch)
 
-    section("1. Continuidad de la serie capturada")
+    section("1. Continuity of the captured series")
     report = continuity_report(
         stamps,
         expected_interval_seconds=settings.poll_interval_seconds,
         tolerance_seconds=settings.gap_after_seconds,
     )
-    print(f"  snapshots capturados : {report['snapshots']}")
-    print(f"  lotes esperados      : {report['expected']}")
-    print(f"  completitud          : {report['completeness_pct']} %")
-    print(f"  ventana              : {report['first']} -> {report['last']}")
-    print(f"  huecos detectados    : {len(report['gaps'])}")
+    print(f"  snapshots captured : {report['snapshots']}")
+    print(f"  batches expected   : {report['expected']}")
+    print(f"  completeness       : {report['completeness_pct']} %")
+    print(f"  window             : {report['first']} -> {report['last']}")
+    print(f"  gaps detected      : {len(report['gaps'])}")
     for gap in report["gaps"][:10]:
         print(
-            f"    {gap.previous} -> {gap.following}  ({gap.duration}, {gap.missing_cycles} lotes)"
+            f"    {gap.previous} -> {gap.following}  ({gap.duration}, {gap.missing_cycles} batches)"
         )
 
-    section(f"2. Calidad del último snapshot ({latest_batch})")
+    section(f"2. Quality of the latest snapshot ({latest_batch})")
     print(quality_summary(latest))
     reliable = occupancy(latest)
     unfiltered = occupancy(latest, reliable_only=False)
-    print(f"\n  plazas nominales            : {latest.height}")
-    print(f"  en linea (is_live)          : {int(latest['is_live'].sum())}")
-    print(f"  fiables (is_reliable)       : {int(latest['is_reliable'].sum())}")
-    print(f"\n  ocupacion solo fiables      : {reliable * 100:.1f} %")
-    print(f"  ocupacion sin filtrar       : {unfiltered * 100:.1f} %")
-    print(f"  sesgo por no filtrar        : {(unfiltered - reliable) * 100:+.1f} puntos")
+    print(f"\n  nominal bays               : {latest.height}")
+    print(f"  online (is_live)           : {int(latest['is_live'].sum())}")
+    print(f"  reliable (is_reliable)     : {int(latest['is_reliable'].sum())}")
+    print(f"\n  occupancy, reliable only   : {reliable * 100:.1f} %")
+    print(f"  occupancy, unfiltered      : {unfiltered * 100:.1f} %")
+    print(f"  bias from not filtering    : {(unfiltered - reliable) * 100:+.1f} points")
 
-    section("3. Sensibilidad al umbral de 'atascado'")
-    print(f"  {'umbral':>10}  {'fiables':>8}  {'cobertura':>10}  {'ocupacion':>10}")
+    section("3. Sensitivity to the 'stuck' threshold")
+    print(f"  {'threshold':>10}  {'reliable':>8}  {'coverage':>10}  {'occupancy':>10}")
     for hours in (6, 12, 18, 24, 48, 168, 720):
         annotated = annotate_quality(
             latest.drop(["status_age_hours", "quality", "is_reliable"]), stuck_after_hours=hours
@@ -90,29 +90,29 @@ def main(argv: list[str] | None = None) -> int:
         occ = occupancy(annotated)
         print(f"  {hours:>8} h  {n:>8}  {n / annotated.height * 100:>9.1f} %  {occ * 100:>9.1f} %")
 
-    section("4. Cobertura por zona (zonas con >= 10 plazas)")
+    section("4. Coverage per zone (zones with >= 10 bays)")
     by_zone = coverage_by_zone(latest, min_bays=10)
-    print(f"  zonas con datos    : {by_zone.height}")
-    print(f"  cobertura mediana  : {by_zone['coverage_pct'].median():.1f} %")
+    print(f"  zones with data    : {by_zone.height}")
+    print(f"  median coverage    : {by_zone['coverage_pct'].median():.1f} %")
     dead = by_zone.filter(pl.col("coverage_pct") == 0)
-    print(f"  zonas al 0 %       : {dead.height}")
-    print("\n  las 10 peores:")
+    print(f"  zones at 0 %       : {dead.height}")
+    print("\n  worst 10:")
     print(by_zone.head(10))
-    print("\n  las 5 mejores:")
+    print("\n  best 5:")
     print(by_zone.sort("coverage_pct", descending=True).head(5))
 
-    section("5. Cobertura por hora UTC")
+    section("5. Coverage per UTC hour")
     print(coverage_by_hour(series))
 
-    section("6. Sensores intermitentes")
+    section("6. Flapping sensors")
     flapping = flapping_sensors(series)
-    print(f"  plazas que alternan fiable/no fiable: {flapping.height}")
+    print(f"  bays alternating reliable/unreliable: {flapping.height}")
     if flapping.height:
         print(flapping.head(10))
 
-    section("7. Zonas enteras caidas en bloque")
-    # Si el fallo fuera por sensor, una zona tendria una mezcla de estados.
-    # Que haya zonas al 100% de un mismo fallo apunta al rele, no al sensor.
+    section("7. Zones failing as a block")
+    # If the failure were per sensor, a zone would show a mix of states. Zones
+    # that are 100% one failure point at the relay, not the sensor.
     uniform = (
         latest.group_by("zone_number")
         .agg(
@@ -126,9 +126,9 @@ def main(argv: list[str] | None = None) -> int:
             all_stuck=pl.col("stuck") == pl.col("bays"),
         )
     )
-    print(f"  zonas de >=5 plazas          : {uniform.height}")
-    print(f"  enteramente fuera de linea   : {int(uniform['all_offline'].sum())}")
-    print(f"  enteramente atascadas        : {int(uniform['all_stuck'].sum())}")
+    print(f"  zones with >= 5 bays    : {uniform.height}")
+    print(f"  entirely offline        : {int(uniform['all_offline'].sum())}")
+    print(f"  entirely stuck          : {int(uniform['all_stuck'].sum())}")
     return 0
 
 

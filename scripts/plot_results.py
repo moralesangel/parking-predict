@@ -1,8 +1,8 @@
-"""Genera los gráficos de `docs/results.md` a partir de los CSV de resultados.
+"""Generate the plots for `docs/results.md` from the result CSVs.
 
     uv run python scripts/plot_results.py
 
-Lee `data/processed/results/` y escribe PNG en `docs/img/`.
+Reads `data/processed/results/` and writes PNGs into `docs/img/`.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")  # sin ventana: esto corre en consola y en CI
+matplotlib.use("Agg")  # headless: this runs in a console and in CI
 import matplotlib.pyplot as plt
 import polars as pl
 
@@ -26,10 +26,10 @@ INK = "#0b0b0b"
 INK_SOFT = "#52514e"
 GRID = "#e3e2de"
 
-#: Color por entidad, en orden fijo. Validado con el script de la guía de
-#: visualización: separación CVD y de visión normal por encima de los umbrales.
-#: El color sigue al modelo, no a su posición en el ranking: si un modelo cambia
-#: de puesto entre gráficos, su color no cambia.
+#: Colour per entity, in fixed order. Validated with the data-visualisation
+#: guide's script: CVD and normal-vision separation above the thresholds.
+#: Colour follows the model, not its rank: if a model changes position between
+#: charts, its colour does not change.
 COLORS = {
     "lightgbm": "#2a78d6",
     "persistence": "#eb6834",
@@ -38,15 +38,15 @@ COLORS = {
 }
 LABELS = {
     "lightgbm": "LightGBM",
-    "persistence": "Persistencia",
-    "calibrated_persistence": "Persistencia calibrada",
-    "historical_mean": "Media histórica",
+    "persistence": "Persistence",
+    "calibrated_persistence": "Calibrated persistence",
+    "historical_mean": "Historical mean",
 }
 ORDER = ["lightgbm", "calibrated_persistence", "persistence", "historical_mean"]
 
 
 def style(ax: plt.Axes) -> None:
-    """Ejes y rejilla recesivos: los datos mandan, el andamiaje acompaña."""
+    """Recessive axes and grid: the data leads, the scaffolding follows."""
     ax.set_facecolor(SURFACE)
     ax.grid(True, color=GRID, linewidth=0.8, axis="y")
     ax.set_axisbelow(True)
@@ -67,12 +67,12 @@ def save(figure: plt.Figure, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=160, bbox_inches="tight", facecolor=SURFACE)
     plt.close(figure)
-    logger.info("escrito %s", path)
+    logger.info("wrote %s", path)
 
 
 def plot_brier_by_horizon(results: Path, images: Path) -> None:
-    """Brier por horizonte. Líneas y no barras: el eje x es continuo y lo que
-    importa es la *tendencia* al alejarse el horizonte, no comparar celdas."""
+    """Brier per horizon. Lines rather than bars: the x axis is continuous and
+    what matters is the *trend* as the horizon grows, not comparing cells."""
     summary = pl.read_csv(results / "summary.csv")
     figure, ax = new_figure(7.2, 4.4)
 
@@ -94,7 +94,7 @@ def plot_brier_by_horizon(results: Path, images: Path) -> None:
             label=LABELS[model],
             zorder=3,
         )
-        # Etiqueta directa al final: identificar la serie sin saltar a la leyenda.
+        # Direct label at the end: identify the series without jumping to a legend.
         ax.annotate(
             LABELS[model],
             (x[-1], y[-1]),
@@ -106,10 +106,10 @@ def plot_brier_by_horizon(results: Path, images: Path) -> None:
         )
 
     ax.set_xticks([5, 10, 15, 30])
-    ax.set_xlabel("Horizonte de predicción (minutos)", color=INK_SOFT, fontsize=10)
-    ax.set_ylabel("Brier score (menor es mejor)", color=INK_SOFT, fontsize=10)
+    ax.set_xlabel("Prediction horizon (minutes)", color=INK_SOFT, fontsize=10)
+    ax.set_ylabel("Brier score (lower is better)", color=INK_SOFT, fontsize=10)
     ax.set_title(
-        "El margen sobre la persistencia crece con el horizonte",
+        "The margin over persistence grows with the horizon",
         color=INK,
         fontsize=12,
         fontweight="600",
@@ -122,11 +122,11 @@ def plot_brier_by_horizon(results: Path, images: Path) -> None:
 
 
 def plot_calibration(results: Path, images: Path, *, horizon: int = 15) -> None:
-    """Calibración: de las veces que el modelo dijo p, ¿ocurrió el p %?"""
+    """Calibration: of the times the model said p, did it happen p% of the time?"""
     figure, ax = new_figure(5.6, 5.4)
     ax.plot([0, 1], [0, 1], color="#b9b8b3", linewidth=1.5, linestyle=(0, (5, 4)), zorder=1)
     ax.annotate(
-        "calibración perfecta",
+        "perfect calibration",
         (0.70, 0.665),
         color=INK_SOFT,
         fontsize=8.5,
@@ -140,9 +140,9 @@ def plot_calibration(results: Path, images: Path, *, horizon: int = 15) -> None:
         if not path.exists():
             continue
         curve = pl.read_csv(path)
-        # Los baselines solo emiten dos probabilidades distintas. Unir esos dos
-        # puntos con una linea sugeriria que tambien producen los valores
-        # intermedios, que es justo lo que NO hacen: se dibujan sueltos.
+        # The baselines only emit two distinct probabilities. Joining those two
+        # points with a line would suggest they also produce the intermediate
+        # values, which is exactly what they do NOT do: they are drawn loose.
         emits_a_range = curve.height > 3
         ax.plot(
             curve["predicted"],
@@ -154,14 +154,14 @@ def plot_calibration(results: Path, images: Path, *, horizon: int = 15) -> None:
             markersize=9,
             markeredgecolor=SURFACE,
             markeredgewidth=1.5,
-            label=LABELS[model] + ("" if emits_a_range else " (solo 2 valores)"),
+            label=LABELS[model] + ("" if emits_a_range else " (only 2 values)"),
             zorder=3,
         )
 
-    ax.set_xlabel("Probabilidad predicha", color=INK_SOFT, fontsize=10)
-    ax.set_ylabel("Frecuencia observada", color=INK_SOFT, fontsize=10)
+    ax.set_xlabel("Predicted probability", color=INK_SOFT, fontsize=10)
+    ax.set_ylabel("Observed frequency", color=INK_SOFT, fontsize=10)
     ax.set_title(
-        f"Calibración a {horizon} minutos",
+        f"Calibration at {horizon} minutes",
         color=INK,
         fontsize=12,
         fontweight="600",
@@ -178,9 +178,9 @@ def plot_calibration(results: Path, images: Path, *, horizon: int = 15) -> None:
 
 
 def plot_by_occupancy(results: Path, images: Path, *, horizon: int = 15) -> None:
-    """Brier por nivel de ocupación actual. Es el desglose que el plan pide,
-    porque la media global esconde el único caso que de verdad importa."""
-    order = ["0 libres (lleno)", "1 libre", "2 libres", "3-5 libres", "6+ libres"]
+    """Brier per current occupancy level. This is the breakdown the plan asks
+    for, because the global mean hides the only case that really matters."""
+    order = ["0 free (full)", "1 free", "2 free", "3-5 free", "6+ free"]
     frame = pl.read_csv(results / f"by_occupancy_h{horizon}.csv")
     frame = frame.with_columns(
         rank=pl.col("occupancy_bucket").replace_strict({k: i for i, k in enumerate(order)})
@@ -194,7 +194,7 @@ def plot_by_occupancy(results: Path, images: Path, *, horizon: int = 15) -> None
     for index, model in enumerate(models):
         offset = (index - (len(models) - 1) / 2) * width
         values = frame[model].to_list()
-        # Hueco de 2 px entre barras adyacentes: separa sin necesitar borde.
+        # A 2px gap between adjacent bars: separates without needing a border.
         ax.bar(
             [p + offset for p in positions],
             values,
@@ -206,10 +206,10 @@ def plot_by_occupancy(results: Path, images: Path, *, horizon: int = 15) -> None
 
     ax.set_xticks(list(positions))
     ax.set_xticklabels(frame["occupancy_bucket"].to_list(), fontsize=9)
-    ax.set_ylabel("Brier score (menor es mejor)", color=INK_SOFT, fontsize=10)
-    ax.set_xlabel("Plazas libres en el tramo ahora", color=INK_SOFT, fontsize=10)
+    ax.set_ylabel("Brier score (lower is better)", color=INK_SOFT, fontsize=10)
+    ax.set_xlabel("Free bays in the segment right now", color=INK_SOFT, fontsize=10)
     ax.set_title(
-        f"A {horizon} min: el problema difícil está a la izquierda",
+        f"At {horizon} min: the hard problem is on the left",
         color=INK,
         fontsize=12,
         fontweight="600",
@@ -223,7 +223,7 @@ def plot_by_occupancy(results: Path, images: Path, *, horizon: int = 15) -> None
 
 
 def plot_by_hour(results: Path, images: Path, *, horizon: int = 15) -> None:
-    """Brier por hora del día, el otro desglose que pide el plan."""
+    """Brier per hour of day, the other breakdown the plan asks for."""
     frame = pl.read_csv(results / f"by_hour_h{horizon}.csv").sort("hour")
     figure, ax = new_figure(8.0, 4.2)
 
@@ -242,10 +242,10 @@ def plot_by_hour(results: Path, images: Path, *, horizon: int = 15) -> None:
         )
 
     ax.set_xticks(range(0, 24, 2))
-    ax.set_xlabel("Hora del día (UTC)", color=INK_SOFT, fontsize=10)
-    ax.set_ylabel("Brier score (menor es mejor)", color=INK_SOFT, fontsize=10)
+    ax.set_xlabel("Hour of day (UTC)", color=INK_SOFT, fontsize=10)
+    ax.set_ylabel("Brier score (lower is better)", color=INK_SOFT, fontsize=10)
     ax.set_title(
-        f"A {horizon} min: el error sigue el ciclo de ocupación",
+        f"At {horizon} min: the error follows the occupancy cycle",
         color=INK,
         fontsize=12,
         fontweight="600",
@@ -263,7 +263,7 @@ def main() -> int:
     settings = get_settings()
     results = settings.processed_dir / "results"
     if not results.exists():
-        print(f"faltan resultados en {results}; ejecuta antes train_evaluate.py", file=sys.stderr)
+        print(f"no results in {results}; run train_evaluate.py first", file=sys.stderr)
         return 1
     images = Path(__file__).resolve().parents[1] / "docs" / "img"
 
