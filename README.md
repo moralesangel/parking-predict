@@ -8,7 +8,7 @@ datos en tiempo real: cuando conduces 12 minutos hasta el destino, lo que import
 no es el estado actual de la zona sino su estado al llegar. La referencia a batir
 es, precisamente, "usar el estado actual" (baseline de persistencia).
 
-> Estado: **Fase 3 (mapa en tiempo real) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
+> Estado: **Fase 4 (definicion del problema) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
 
 ## Requisitos
 
@@ -45,6 +45,9 @@ uv run python scripts/crosswalk_report.py
 
 # Recalcular el informe de calidad de datos
 uv run python scripts/quality_report.py
+
+# Construir el dataset de entrenamiento desde el historico de 2019
+uv run python scripts/build_dataset.py --months 2019-01:2019-12
 ```
 
 Mapa en tiempo real (API + frontend en http://localhost:8000):
@@ -85,6 +88,7 @@ Dos decisiones que vienen de la Fase 2:
 | [`docs/data_schema.md`](docs/data_schema.md) | Esquema real de la API, verificado campo a campo |
 | [`docs/id_crosswalk.md`](docs/id_crosswalk.md) | Por que el historico no cruza con el tiempo real, y que si funciona |
 | [`docs/data_quality.md`](docs/data_quality.md) | Los dos modos de fallo de los sensores y cuantas plazas son utilizables |
+| [`docs/dataset.md`](docs/dataset.md) | El problema de prediccion, la unidad espacial y como se construye el dataset |
 
 Dos hallazgos que condicionan el resto del proyecto:
 
