@@ -8,7 +8,7 @@ datos en tiempo real: cuando conduces 12 minutos hasta el destino, lo que import
 no es el estado actual de la zona sino su estado al llegar. La referencia a batir
 es, precisamente, "usar el estado actual" (baseline de persistencia).
 
-> Estado: **Fase 2 (calidad de datos) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
+> Estado: **Fase 3 (mapa en tiempo real) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
 
 ## Requisitos
 
@@ -47,12 +47,36 @@ uv run python scripts/crosswalk_report.py
 uv run python scripts/quality_report.py
 ```
 
-Con Docker, el poller como servicio:
+Mapa en tiempo real (API + frontend en http://localhost:8000):
 
 ```bash
-docker compose up -d poller
+uv run python -m uvicorn --factory parking.api.app:create_app --port 8000
+```
+
+Con Docker, poller + API + mapa:
+
+```bash
+docker compose up --build       # -> http://localhost:8000
 docker compose logs -f poller
 ```
+
+## API
+
+| Endpoint | Para que sirve |
+|---|---|
+| `GET /bays/live` | Estado de cada plaza con su bandera de fiabilidad |
+| `GET /zones/coverage` | Cobertura de sensores por zona |
+| `GET /health` | `ok`, `stale` o `no_data`, con la antiguedad del ultimo lote |
+| `GET /docs` | OpenAPI interactivo |
+
+Dos decisiones que vienen de la Fase 2:
+
+- `/bays/live` devuelve **todas** las plazas por defecto, tambien las no
+  fiables, con `state: "unknown"`. Omitirlas haria que el mapa pintara como
+  libre una plaza que quiza esta ocupada. `?reliable_only=true` las filtra.
+- La API **publica la antiguedad de sus propios datos**. Si el poller muere, la
+  API seguiria sirviendo el ultimo snapshot; `is_stale` y `/health` convierten
+  ese fallo silencioso en uno visible, y el mapa muestra un aviso.
 
 ## Documentacion
 

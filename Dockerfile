@@ -1,5 +1,6 @@
-# Imagen del poller. Las dependencias de ML (extra `ml`) no se instalan:
-# el poller solo necesita httpx, polars y pydantic, y la imagen baja de tamaño.
+# Imagen comun del poller y de la API: mismo codigo, distinto comando (ver
+# docker-compose.yml). Las dependencias de ML (extra `ml`) no se instalan;
+# ninguno de los dos servicios las necesita todavia y la imagen baja de tamano.
 FROM python:3.12-slim-bookworm
 
 # uv desde su imagen oficial: evita un `pip install uv` y fija la versión.
@@ -20,6 +21,7 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-install-project --no-dev
 
 COPY src/ ./src/
+COPY web/ ./web/
 RUN uv sync --locked --no-dev
 
 # Usuario sin privilegios. El volumen de datos se monta con este UID (ver
@@ -29,7 +31,8 @@ RUN useradd --create-home --uid 10001 parking \
     && chown -R parking:parking /data
 USER parking
 
-ENV PARKING_DATA_DIR=/data
+ENV PARKING_DATA_DIR=/data \
+    PARKING_WEB_DIR=/app/web
 
 # Comprueba que el último snapshot no es demasiado viejo. Con sondeo cada 2 min,
 # 20 min sin escribir significa que el poller está atascado aunque el proceso
@@ -40,4 +43,7 @@ d=pathlib.Path(os.environ['PARKING_DATA_DIR'])/'raw'/'realtime'; \
 f=sorted(d.rglob('*.parquet'), key=lambda p: p.stat().st_mtime); \
 sys.exit(0 if f and time.time()-f[-1].stat().st_mtime < 1200 else 1)"]
 
-ENTRYPOINT ["python", "-m", "parking.ingest.poller"]
+# CMD y no ENTRYPOINT: docker-compose sustituye este comando por el de uvicorn
+# en el servicio `api`. Con ENTRYPOINT en forma exec, `command` se concatenaria
+# como argumentos del poller en vez de reemplazarlo.
+CMD ["python", "-m", "parking.ingest.poller"]

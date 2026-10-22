@@ -1,3 +1,4 @@
+# web/ SI entra en la imagen: la API lo sirve como estaticos.
 # Los datos se montan como volumen, nunca van en la imagen (son GB).
 data/
 .venv/
@@ -11,5 +12,4 @@ notebooks/
 docs/
 tests/
 scripts/
-web/
 .env
