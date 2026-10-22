@@ -8,7 +8,7 @@ datos en tiempo real: cuando conduces 12 minutos hasta el destino, lo que import
 no es el estado actual de la zona sino su estado al llegar. La referencia a batir
 es, precisamente, "usar el estado actual" (baseline de persistencia).
 
-> Estado: **Fase 1 (ingesta) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
+> Estado: **Fase 2 (calidad de datos) completada**. Ver [PLAN.md](PLAN.md) para el roadmap.
 
 ## Requisitos
 
@@ -42,6 +42,9 @@ uv run python -m parking.ingest.poller
 
 # Recalcular el informe de cruce de identificadores
 uv run python scripts/crosswalk_report.py
+
+# Recalcular el informe de calidad de datos
+uv run python scripts/quality_report.py
 ```
 
 Con Docker, el poller como servicio:
@@ -57,14 +60,18 @@ docker compose logs -f poller
 |---|---|
 | [`docs/data_schema.md`](docs/data_schema.md) | Esquema real de la API, verificado campo a campo |
 | [`docs/id_crosswalk.md`](docs/id_crosswalk.md) | Por que el historico no cruza con el tiempo real, y que si funciona |
+| [`docs/data_quality.md`](docs/data_quality.md) | Los dos modos de fallo de los sensores y cuantas plazas son utilizables |
 
 Dos hallazgos que condicionan el resto del proyecto:
 
 - **`Present` significa plaza ocupada**, no libre: el campo describe el coche.
 - **`lastupdated` es el sello del lote del feed**, no del sensor. Los 5264
   sensores vivos comparten un valor identico y los caidos se quedan congelados
-  con el del ultimo lote en que aparecieron. De las 6324 plazas del dataset,
-  **solo ~5264 reportan**; las otras 979 llevan mas de 30 dias caidas.
+  con el del ultimo lote en que aparecieron.
+- **Solo 3557 de las 6324 plazas (56,2%) dan una lectura utilizable.** 1060
+  estan fuera del lote del feed y otras 1707 lo reportan pero con el sensor
+  congelado (mediana: 150 dias sin cambiar de estado). El segundo fallo es el
+  mas numeroso y no se ve si solo se vigila `lastupdated`.
 
 ## Restricciones del entorno de desarrollo
 

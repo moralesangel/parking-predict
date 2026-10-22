@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=4, ge=0)
 
+    # --- Calidad de datos ---
+    # Una plaza que sigue en el lote del feed pero cuyo estado no cambia desde
+    # hace mucho esta atascada: el rele la reporta y el sensor esta congelado.
+    # 24 h sale del valle de la distribucion real, que es bimodal: el modo sano
+    # se agota hacia las 12 h, la franja 18-24 h tiene 12 sensores de 5264, y el
+    # modo congelado arranca pasados los 30 dias (mediana 150 dias). Ver
+    # docs/data_quality.md.
+    stuck_after_hours: float = Field(default=24.0, gt=0)
+    # Hueco de red: el feed publica cada 120 s, asi que dos snapshots separados
+    # por mas de 3 ciclos indican lotes perdidos (por el poller o por la fuente).
+    gap_after_seconds: float = Field(default=360.0, gt=0)
+
     # --- Almacenamiento ---
     data_dir: Path = _REPO_ROOT / "data"
 

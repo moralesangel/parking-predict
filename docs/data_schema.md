@@ -36,6 +36,11 @@ del poller.
 - `Present` → hay un coche → la plaza está **OCUPADA** (3581 filas, 56,7 %)
 - `Unoccupied` → no hay coche → la plaza está **LIBRE** (2743 filas, 43,3 %)
 
+Ese 56,7 % es el reparto crudo de las 6324 filas en un instante concreto, no la
+ocupación del parque: incluye sensores caídos y atascados. La cifra utilizable
+se calcula solo sobre lecturas fiables y se mueve con la hora del día; ver
+[`data_quality.md`](data_quality.md).
+
 Es un error fácil de cometer y silencioso: invierte el target del modelo sin
 provocar ningún fallo. La ingesta normaliza a un booleano explícito
 `is_occupied` y la cadena cruda no llega nunca a las features.
